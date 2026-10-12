@@ -1,0 +1,203 @@
+任何 Rust 程序员首先需要一台为开发妥善配置好的计算机。在本附录中，我们将逐步介绍在一台干净的 Linux、macOS 或 Windows 机器上搭建 Rust 开发环境所需的所有步骤。
+本附录旨在为你提供一套实用的默认工具，它们能陪你走完整个开发周期：编辑、编译和调试。本附录中的推荐并不意味着这些工具是最好的或唯一的工具，只是说它们为一名 Rust 新手提供了一套合理的默认选择。
+在本附录中，我们将涵盖以下主要主题：
+\begin{itemize}
+  \item 安装 Rust 开发工具
+  \item 为 Rust 开发配置 Visual Studio Code
+  \item 使用 Rust 的 lint 工具 Clippy
+\end{itemize}
+\section{安装 Rust 开发工具}
+\label{idx:idx_d833e0da}
+针对不同的操作系统，Rust 开发工具有多种不同的安装方式。若干操作系统上的包管理器都有各自独立的发行包。在本节中，我们将重点关注由 Rust 项目创建和维护的官方安装工具集。这样做的好处是，在所有主流操作系统上都能提供几乎一致的安装说明。
+\subsection{获取 Rust 开发工具}
+\label{idx:idx_75182d64}
+最简的 Rust 开发环境由三个主要工具组成。\texttt{rustup} 是管理和修改 Rust 安装的工具，包括更新到更新的版本以及安装辅助开发工具。\texttt{rustc} 是 Rust 编译器，编译 Rust 程序当然少不了它。最后，Cargo 是 Rust 的构建和打包工具，用于项目和依赖管理。Rust 还需要一个链接器，它通常由系统提供。如果你的机器上能开发 C++ 代码，那么很可能已经安装了合适的链接器。
+\label{idx:idx_bb26e788}
+我们的三个主要开发工具由 \texttt{rustup-init} 程序安装。该程序可以在 \href{https://rustup.rs/}{\texttt{https:/\allowbreak{}/\allowbreak{}rustup.\allowbreak{}rs/\allowbreak{}}} 网站上找到。该网站会检测客户端所用的操作系统，并提供让用户自行下载并安装 \texttt{rustup-init} 的选项，用户随后可以随时运行它。它还提供另一种选择：一行 shell 命令，可以复制粘贴到用户的终端中，一步完成下载并运行。
+运行之后，Rust 安装程序会询问用户想安装什么。对 Rust 新手来说，接受默认选项通常是最好的。如果存在外部依赖要求，程序也会对此发出警告。例如，在 Windows 上，安装程序会询问用户是否希望安装 Visual Studio。对外部软件的要求未来可能会变化，比如 Rust 项目开始自带链接器时。
+\label{idx:idx_6467cb08}
+\begin{myNotic}{注意}
+\textbf{Visual Studio 的许可}
+
+如果在 Windows 上安装 Rust 时需要 Visual Studio，安装程序会下载并安装一份 Visual Studio Community Edition。该版本在许多用途下是免费的，但 Windows 上的 Rust 用户应仔细确认 Community Edition 的许可证是否适合自己。Rust 也可以使用付费版本的 Visual Studio，或基于 \texttt{gcc} 的 MinGW-\allowbreak{}w64 开源工具链。
+\end{myNotic}
+\label{idx:idx_73915094}
+在用户确认所有提示后，Rust 开发工具就会被下载并安装。安装程序完成后会打印一条成功消息，并指导用户如何把所需的环境变量修改导入到当前的 shell 中。用户也可以选择关闭并重新打开自己的 shell 或终端程序，让新设置生效。
+如果一切顺利，现在我们就安装好了 Rust 开发工具，可以开启 Rust 之旅了。第一步是验证一切都能正常工作。
+\subsection{验证安装}
+\label{idx:idx_b1679bb5}
+接下来，我们要验证工具是否正确安装并可用。最好的办法之一是编译并运行一个程序。我们先打开一个新的终端窗口，确认编译器安装正确：
+\begin{codeboxdark}
+$ rustc --version
+\end{codeboxdark}
+运行这条命令可以确认 \texttt{rustc} 存在于系统路径中，并且没有安装问题。预期的输出是已安装的 Rust 版本，很可能就是你安装时的最新 Rust 版本。
+为了测试编译和运行程序，我们可以用 Cargo 生成一个新项目。Cargo 可以生成二进制 crate 或库 crate。我们先来试试二进制 crate：
+\begin{codeboxdark}
+$ cargo new hello
+$ cd hello
+$ cargo run
+\end{codeboxdark}
+我们应该会看到 Cargo 输出一些消息，表明程序正在编译，随后终端里会显示那句常见的 \texttt{"Hello,\allowbreak{} world!"}。如果此时出现任何错误，可能意味着系统缺少某些开发工具，比如系统链接器。
+对于库 crate，我们可以做同样的练习。库 crate 的情况下，Cargo 不会生成二进制文件，所以不能用 \texttt{cargo run}，但我们可以改用 \texttt{cargo test} 来运行自动生成的测试：
+\begin{codeboxdark}
+$ cargo new --lib hello_lib
+$ cd hello_lib
+$ cargo test
+\end{codeboxdark}
+\label{idx:idx_83e9235f}
+我们应该会看到 Cargo 创建的 \texttt{tests::\allowbreak{}it\_\allowbreak{}works} 测试通过。同样，这里的任何错误都可能表明系统链接器有问题。
+如果你已经走到这一步，那么现在你应该装好了所有开发工具，并已验证过能够编译和运行 Rust 程序和测试。接下来，我们来看看可以用 \texttt{rustup} 做些什么。
+\subsection{用 rustup 管理 Rust 安装}
+\label{idx:idx_3b6d7633}
+\label{idx:idx_4752bca9}
+\label{idx:idx_ec23d1a6}
+顾名思义，\texttt{rustup} 主要用于更新 Rust 安装。Rust 更新频繁，新版本以六周为周期发布。这些通常是小幅更新，但每次发布一般都会有值得关注的新特性。由于 Rust 向后兼容，本来并没有特别需要去更新 Rust 安装。但保持更新还是有帮助的，原因很简单：生态中的大部分内容往往都会紧跟最新的 stable 版本。要把我们的安装更新到最新版本，只需运行以下命令：
+\begin{codeboxdark}
+$ rustup update stable
+\end{codeboxdark}
+这会下载并安装最新的 Rust 版本。通常升级是个无痛的过程，但偶尔会有小 bug 混进 stable 版本。出现这种情况时，Rust 团队会很快发布一个修复该问题的次版本更新，然后可以用同样的命令来安装。
+\label{idx:idx_1dfb96a5}
+\label{idx:idx_ef5270b6}
+\label{idx:idx_0bb5a408}
+虽然我们主要使用 stable Rust，但 \texttt{rustup} 也允许我们访问额外的\textbf{频道}（channel）。频道是一套独立的开发工具集，其更新节奏与 stable 版本不同。beta 频道是 Rust 即将发布的下一个版本，而 nightly 频道包含来自仍在开发的开发分支上的发布版本。nightly 版本提供了对不稳定特性的访问，这些特性还需进一步完善，才能进入 stable 版本。过去，一些有用的 crate 曾依赖仅存在于 nightly 的不稳定特性，但如今这类 crate 已是罕见的例外。
+本书不会太多使用 nightly，但我们会以 nightly 为例，简要看看如何安装和使用额外的工具链。nightly 工具链可以用以下命令安装：
+\begin{codeboxdark}
+$ rustup toolchain install nightly
+\end{codeboxdark}
+我们可以用 \texttt{rustup default} 命令修改默认工具链：
+\begin{codeboxdark}
+$ rustup default nightly
+\end{codeboxdark}
+当安装了多个工具链时，我们可以在调用 \texttt{cargo} 命令时指定想用哪一个：
+\begin{codeboxdark}
+$ cargo +nightly run
+\end{codeboxdark}
+接下来，让我们确保 \texttt{stable} 是默认工具链。如果你没有运行过前面任何一条命令，那情况本就如此。否则，你需要运行以下命令，把我们的安装恢复回初始状态：
+\begin{codeboxdark}
+$ rustup default stable
+\end{codeboxdark}
+\texttt{rustup} 另一个有趣的功能是能够安装不同的\textbf{目标平台}（target）。目标平台指的是可以为交叉编译而安装的架构。例如，如果你想在自己的 Windows 或 Linux 开发机上构建程序的 WebAssembly 或 Android 版本，这就很有用。交叉编译是个很大的话题，但你可以用以下命令查看可用的目标平台：
+\begin{codeboxdark}
+$ rustup target list
+\end{codeboxdark}
+\label{idx:idx_bfb014bc}
+\label{idx:idx_b160e28e}
+\label{idx:idx_1278577d}
+\texttt{rustup} 我们要考察的最后一部分是\textbf{组件}（component）。组件是随工具链一起安装、标准开发工具之外的额外软件。安装 Rust 开发工具时会一并安装若干组件，包括可通过 \texttt{rustup doc} 命令访问的离线文档，以及 Rust 的 lint 工具 Clippy，我们会在本附录后面深入探讨它。
+要查看可用的组件，可以使用以下命令：
+\begin{codeboxdark}
+$ rustup component list
+\end{codeboxdark}
+现在你应当对如何管理自己的 Rust 安装有了不错的把握。接下来我们来看如何配置一套出色的编辑体验。
+\section{为 Rust 开发配置 Visual Studio Code}
+\label{idx:idx_d74b672b}
+\label{idx:idx_6b43fcea}
+\label{idx:idx_0d7641bd}
+从 C++ 转过来，你很可能已经对某个特定的编辑器或 IDE 用得很顺手。如果它是流行的编辑器，那么 Rust 很可能与之配合良好。Rust 提供的工具实现了流行的\textbf{语言服务器协议}（\textbf{LSP}），这是一种与编辑器无关的、提供语言重构与分析功能的方式。因此，它可以用于所有实现了 LSP 的编辑器。
+对于目前还没有强烈编辑器偏好的人，我们在这里会带你一步步配置 Visual Studio Code 进行 Rust 开发。Visual Studio Code 是一款免费、高质量的编辑器，与 Rust 及其他语言都配合良好，但它远非唯一的选择。
+\subsection{安装 Visual Studio Code}
+\label{idx:idx_5bb4fc18}
+访问编辑器的主网站即可安装 Visual Studio Code：\href{https://}{\texttt{https://}}
+\label{idx:idx_b02bdbfd}
+\texttt{code.\allowbreak{}visualstudio.\allowbreak{}com/\allowbreak{}}。与 Rust 网站一样，服务器会检测你的操作
+系统，并为你提供一个合适的下载包。根据你的操作系统不同，可能会有不止一种选择，所以请挑选你安装起来最放心的那个包。下载之后，你可以用自己操作系统的传统软件安装方式来安装它。
+点击下载链接会把你带到一个页面，上面为编辑器的初次使用者提供了若干资源，包括入门视频和配置建议。如果你不熟悉这个编辑器，我建议你花些时间看看这些视频，熟悉一下用户界面、扩展系统，以及 Visual Studio Code 所称的\textbf{命令面板}（Command Palette）。对于喜欢直接上手的人，在不加载任何项目的情况下打开编辑器，会提供一些编辑器内的教程。
+Rust 项目分发了一个名为 \texttt{rust-\allowbreak{}analyzer} 的程序来实现 LSP，同时也为 Visual Studio Code 分发了一个扩展，为 Rust 开发启用若干有用的功能。要在全新安装的 Visual Studio Code 中加入这个扩展，按 \emph{Ctrl} + \emph{Shift} + \emph{X} 打开扩展浏览器，搜索 \texttt{rust-\allowbreak{}lang.\allowbreak{}rust-\allowbreak{}analyzer}。点击扩展名称旁边的\textbf{安装}按钮。如果编辑器告诉你需要重新加载，那就现在重新加载。
+回到编辑器主界面后，我们就拥有完整的 Rust 支持，可以直接使用了。不妨加载一个我们之前创建的骨架项目来试一试。要在编辑器内构建 Rust 项目，按 \emph{Ctrl} + \emph{Shift} + \emph{B}，然后选择 \textbf{rust: cargo build}。第一次从编辑器构建时，我们可能需要把编辑器生成的 \texttt{tasks.json} 文件保存到磁盘。这个文件包含了我们可能想要修改、以改变构建行为的各项设置。例如，我们可能想把默认的调试构建改为带优化的发布构建，或者在构建菜单的选项列表中加入其他选项。
+\subsection{使用 Rust 分析扩展}
+\label{idx:idx_d2a10f06}
+\label{idx:idx_37057724}
+安装好 Rust 支持后，我们现在就来看看 Visual Studio Code 提供的分析功能。Visual Studio Code 团队维护了一份文档，介绍如何在其编辑器中使用 \texttt{rust-}
+\texttt{analyzer}，该文档可以在 \href{https://code.visualstudio.com/docs/}{\texttt{https:/\allowbreak{}/\allowbreak{}code.\allowbreak{}visualstudio.\allowbreak{}com/\allowbreak{}docs/\allowbreak{}}} 找到
+\texttt{languages/\allowbreak{}rust}。在接下来的几段中，我们会考察其中一些最有用的功能
+，这些功能来自 \texttt{rust-\allowbreak{}analyzer} 扩展，对刚上手 Rust 的程序员尤其有用。
+首先是文档访问。当鼠标悬停在一个标识符上时，扩展会在一个弹出窗口中显示该函数或类型的文档。如果这个小的预览帮助不够，你可以右键点击该标识符，然后从上下文窗口中选择\textbf{打开文档}（Open Docs）。在浏览某个结构体中的函数、寻找你需要的那一个时，这尤其有用。
+找到所需功能的另一种方式，是通过 \texttt{rust-\allowbreak{}analyzer} 扩展提供的自动补全功能。当你在编辑器中输入代码时，扩展会搜索在当前上下文中合理的函数和标识符，并把它们建议给你。这不仅能省下一些输入，也是发现新功能的好方法。例如，输入一个整数字面量后再输入 \texttt{.}，就会列出可作用于整型的众多数学函数。
+\texttt{rust-\allowbreak{}analyzer} 扩展的另一项功能是为你提供内联类型提示。由于 Rust 是一门会进行类型推断的语言，类型常常在代码中被省略。编辑器借助分析器推断出这些被省略的类型，并把它们与代码一起显示。这些提示的字体和配色与代码正常的语法高亮略有不同，因此可以与实际代码区分开。有些 Rust 新手会觉得这些提示极为有用，但也有人在还在学习该语言语法时会被它们弄糊涂。如有需要，可以在 \texttt{rust-\allowbreak{}analyzer} 的首选项中把它们关掉。
+\texttt{rust-\allowbreak{}analyzer} 扩展还会在后台编译代码并高亮错误。这能省下大量原本可能花在编译上、以发现错误的时间。这个扩展有时还能为这些错误提供修复建议。这些建议修复最有意思的用途之一，就是免去输入样板代码。这一点值得快速演示一下。
+\label{idx:idx_e14c9e9f}
+\label{idx:idx_3abe41cf}
+假设我想为我的结构体实现 \texttt{std::\allowbreak{}fmt::\allowbreak{}Display} trait。可以把它看作提供了一种方式，让我们自定义结构体打印到 \texttt{stdout} 时的样子。在 Visual Studio Code 中有了 \texttt{rust-\allowbreak{}analyzer}，我只需像这样为我的 \texttt{Foo} 结构体定义这个 trait：
+\begin{codebox}[rust]
+impl std::fmt::Display for Foo {}
+\end{codebox}
+这不是合法的 Rust，因为 trait 的内容还没有定义。\texttt{rust-\allowbreak{}analyzer} 扩展会高亮这个错误，并给我一个灯泡图标，表示有可用的修复。点击这个图标并选择\textbf{实现缺失的成员}（Implement missing members）后，代码会被替换为一份完整、能正确编译、等着我去实现的定义：
+\begin{codebox}[rust]
+impl std::fmt::Display for Foo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
+}
+\end{codebox}
+因为这个扩展替我正确填好了定义，我不必去查这个 trait 样板代码的具体写法，可以完全专注于实现本身。
+\label{idx:idx_145ef442}
+\label{idx:idx_1199194a}
+\texttt{rust-\allowbreak{}analyzer} 扩展还有若干其他功能，让我们阅读、编写和重构 Rust 代码时更轻松。这些功能包括自动代码格式化、符号重命名和高级代码导航。对新手和有经验的 Rust 程序员来说，使用 \texttt{rust-\allowbreak{}analyzer} 扩展都能节省大量时间，但它只是 Visual Studio Code 提供的功能之一。接下来，我们来看另一个重要话题：调试。
+\subsection{在 Visual Studio Code 中调试 Rust}
+\label{idx:idx_5a486e35}
+调试是编程的一项核心技能。虽然很多程序员觉得插入 \texttt{print} 语句来追踪程序执行很快捷，但没有什么能比得上单步执行一个正在运行的程序、并观察数据变化的能力。
+\label{idx:idx_fc9cc964}
+Rust 是一门在调试方面很有意思的语言，因为它的许多行为在 stable 模式下就已经是可预测的。你不必担心内存覆写、越界读取，或者更传统的系统编程语言中的其他各种隐患。把这些与内置的测试支持结合起来看，我们还需要调试吗？
+当然需要！调试在 Rust 中仍然极其重要，尽管在我自己的编码中，它出现的频率比在其他语言中要低。当我最初把 Rust 介绍给同事和朋友时，他们问的第一个问题往往就是它有没有调试器。
+由于 Rust 工具链生成的二进制文件与 C++ 编译器格式相同，并且使用相同的调试信息格式，任何能调试 C++ 程序的调试器在技术上也能调试 Rust 程序。你可以随意尝试自己喜欢的调试和性能分析工具，但同样，我们来看 Visual Studio Code 如何解决手头的问题。
+首先，我们必须安装一个调试扩展。一个在所有平台上都受到推荐、很受欢迎的扩展叫 \texttt{CodeLLDB}，可以通过在扩展管理界面中搜索找到，该界面用 \emph{Ctrl} + \emph{Shift} + \emph{X} 打开，方式与我们安装 \texttt{rust-\allowbreak{}analyzer} 扩展时相同。安装好之后，我们有两种方式开始调试会话。
+如果你加载了我们创建的某个骨架项目，你可能注意到，每个 \texttt{main()} 函数和每个测试都被 \textbf{运行}（Run）和 \textbf{调试}（Debug）两个选项标注，这是由 \texttt{rust-}
+\texttt{analyzer} 扩展提供的。点击\textbf{调试}选项会以调试模式编译程序
+并在该入口点开始一个调试会话。这是开始调试会话最方便的方式之一，不过目前还没办法用这种方式向程序传递参数。当然，除非我们设置了断点，否则调试器多半只会运行程序然后干净地退出。要设置断点，我们需要把光标移到感兴趣的那行代码上，然后按 \emph{F9} 键。再次点击\textbf{调试}选项时，我们会看到程序停在了断点处——前提是我们把它设在会被执行的代码里。
+\label{idx:idx_af0b9ebf}
+\label{idx:idx_77bf2c5c}
+Visual Studio Code 的调试用户界面可以用 \emph{Ctrl} + \emph{Shift} + \emph{D} 快捷键打开。在这个窗口里，你可以查看调试器通常提供的许多信息，比如局部变量的内容、专门监视其变化的变量、调用栈，以及当前的断点列表。
+单步执行已停止的程序可以用 \emph{F10} 和 \emph{F11} 键完成，很像 Visual Studio Code 的「老大哥」Visual Studio 中那个备受好评的可视化调试器。编辑器里源代码顶部还有一个小控件，让我们可以控制程序的执行并退出调试会话。
+前面我提到过启动调试会话的第二种方式。在调试用户界面中，当没有当前会话时，会显示一个\textbf{运行和调试}（Run and Debug）按钮。第一次点击它时，它会检测到我们身处一个 Rust 工作区，并提示我们允许自动创建 \texttt{launch.json} 配置文件。创建好这个文件后，我们就可以直接从调试用户界面启动一个新会话。我们还可以编辑这个 JSON 配置，添加任何想要传给程序的参数。
+至此，Visual Studio Code 已为我们配置完毕，我们也知道如何在编辑器中编译、编辑和调试 Rust 项目。但在我们认为开发环境完备之前，还有一个话题需要探讨：lint 检查。
+\section{使用 Clippy：Rust 的 lint 工具}
+\label{idx:idx_5c3d7669}
+\label{idx:idx_ea6d7ebd}
+lint 工具在计算机科学中有着悠久的历史，存在于许多编程语言里。正如其名所暗示的，它们能通过对程序做一种轻量的静态分析、并高亮潜在问题，把你代码里的「毛刺」（lint）挑出来。使用一个好的 lint 工具，就像有一位非常聪明的代码评审员坐在你桌旁陪着你。
+\subsection{使用 Clippy}
+\label{idx:idx_b03a4df7}
+C 和 C++ 的 lint 工具主要（但不完全）关注指针的误用以及其他内存安全问题。Rust 默认已经保护你免于这类错误，因此使用 Clippy 的最佳理由是：它能教你一些否则对初学者并不明显的、改进 Rust 代码的方法。这些方法涵盖范围很广，从减少完成常见任务所需的输入量，到教你如何避开常见的性能陷阱。
+lint 工具的成败取决于其信噪比。小问题也许很容易用静态分析标记出来，但用户往往不愿为了在输出中找出 2、3 条关于重要问题的警告，而费力翻遍其中 100 条关于小问题的警告。好的 lint 工具提供的价值多于噪声。按这个标准，Clippy——得名于那个以乐于助人著称的拟人化回形针——是一款出色的 lint 工具。它的开箱体验往往提供的价值远多于噪声，对新 Rust 用户尤其如此。
+Clippy 随其余 Rust 开发工具默认安装，在终端应用中运行 \texttt{cargo clippy} 命令即可调用。你也可能更愿意从编辑器里调用它。如果你使用的是 Visual Studio Code，并装了我们之前配置的 \texttt{rust-\allowbreak{}analyzer} 扩展，那么可以在构建菜单下把它作为一个选项找到，该菜单用 \emph{Ctrl} + \emph{Shift} + \emph{B} 快捷键打开。
+Clippy 还有一种模式，可以修改你的源代码来处理它的许多警告。可以用以下命令调用：
+\begin{codeboxdark}
+$ cargo clippy --fix
+\end{codeboxdark}
+\label{idx:idx_d06e3b2d}
+默认情况下，它会尽可能多地修复问题。Clippy 团队只收录那些极有可能正确工作、不会破坏你源代码的自动修复。
+\subsection{为你的项目配置 Clippy}
+\label{idx:idx_fcf9005e}
+作为 Rust 初学者，先按默认选项用一段时间 Clippy，再去考虑开启或关闭某些行为，是很有价值的。即便是那些常令人望而生畏的风格检查，也能让你了解到更广泛的 Rust 社区里使用的地道风格或普遍接受的风格。就算别的什么都没有，它们也能让你认识到一些你原本没意识到存在的新风格或新 API 调用。尽管如此，随着我们在 Rust 之路上继续前行，我们可能开始想改变默认行为。
+和大多数 lint 工具一样，我们想要修改 Clippy 配置的主要原因，是改变各个检查（即 \textbf{lint}）的行为。Clippy 中的 lint 与 Rust 中的普通警告很相似，有三种可能的配置：allow、warn 和 deny。设为 allow 的 lint 处于禁用状态，意味着该 lint 所警告的行为在项目里通常是被允许的。设为 warn 的 lint 会发出警告，并建议程序员修复该问题。最后，设为 deny 的 lint 会发出错误而不是警告。这在想把某些特定不良行为排除在共享代码库之外时很有用。
+设置每个 lint 状态的方式有好几种。最灵活的是直接在源代码上做标注来配置它们。Rust 语言允许我们用它的\textbf{属性}（attribute）语法，在程序中不同的作用域里设置来自编译器的警告的配置。举个例子，我们可以忽略 Rust 编译器发出的、强制结构体名称使用特定大小写风格的警告：
+\begin{codebox}[rust]
+#[allow(non_camel_case_types)]
+struct test;
+\end{codebox}
+通常情况下，我们会收到一条警告，建议把我们的结构体名字改成
+\texttt{Test}，但由于我们为这个结构体允许了该行为，编译器将不再
+报错。正如我们所料，我们也可以根据各自期望的行为，对 Rust 警告使用 \texttt{warn} 和 \texttt{deny} 属性。
+\label{idx:idx_cfd13e83}
+这套机制同样被扩展到了 Clippy，做法是在 lint 名称前加上 \texttt{clippy::}。根据属性放置的位置，它可以影响单个类型、一个函数，或者整个项目。例如，要为整个 crate 启用所有 Clippy lint，我们可以把这个属性放在 \texttt{main.rs} 或 \texttt{lib.rs} 文件的顶部或靠近顶部的位置：
+\begin{codebox}[rust]
+#![warn(clippy::all)]
+\end{codebox}
+注意，当我们希望该指令影响整个 crate 时，必须在它前面加上 \texttt{\#!} 而不是 \texttt{\#}。Rust 把前者规定为\textbf{内部属性}（inner attribute），影响属性所在的作用域（在我们的例子中就是整个 crate）；把后者规定为\textbf{外部属性}（outer attribute），影响源代码中紧随其后的内容。
+在需要细粒度修改时，在源代码里配置 Clippy lint 会很方便，但对整个项目而言，在每个 crate 的 Cargo 配置中指定它们可能更直接——该配置存放在 crate 根目录的 \texttt{Cargo.toml} 文件里。要做出与刚才看到的 crate 级属性相同的修改，我们可以在 \texttt{Cargo.toml} 文件的任意位置加入这样一个节：
+\begin{codebox}[text]
+[lints.clippy]
+all = "warn"
+\end{codebox}
+如果源代码中的设置与 Cargo 配置发生冲突，以源代码为准。
+\label{idx:idx_3f8728bf}
+官方文档中有更多关于 Clippy 的信息，包括一份详尽的 lint 列表，甚至还有更多配置它的方法。不过现在，我们应当已经很好地理解了它如何帮助刚接触这门语言的程序员发现更好的代码组织方式、写出更地道的 Rust 代码。如果它在某个时候碍了事，我们也知道如何有选择地启用或禁用其中一部分，以提升它为我们特定项目所提供的价值。
+\needspace{26\baselineskip}
+\begin{samepage}
+\subsection{获取本书的 PDF 版本及更多内容}
+扫描二维码（或访问 \texttt{packtpub.\allowbreak{}com/\allowbreak{}unlock}）。按书名搜索本书，确认版本，然后按照页面上的步骤操作。
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\emph{注意：请把发票放在手边。直接从 Packt 购买则无需发票。}
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\end{samepage}

@@ -1,0 +1,105 @@
+读完本书并跟着示例动手实践之后，你应该已经打下了坚实的基础，可以在此基础上打造真正的 Rust 专业能力。接下来，我们将探讨如何继续这场 Rust 之旅，重点放在刻意练习上。
+在与同行交流时，我发现对许多人来说，学习一门新技术最大的困扰在于要占用工作或陪伴家人的时间。有鉴于此，本章将聚焦于那些不会霸占你全部空闲时间的 Rust 练习方式。
+当然，有些读者可能已经准备好投身其中，开始在工作中使用 Rust。如果你就是其中之一，我们将探讨一些方法，让这一转变尽可能顺畅，同时不会让同事产生抵触。
+本章我们将涵盖以下主要主题：
+\begin{itemize}
+  \item 在家练习 Rust
+  \item 在职场中驾驭 Rust
+  \item 跟进 Rust 的最新动态
+\end{itemize}
+\section{在家练习 Rust}
+\label{idx:idx_33db39ad}
+我们中的许多人可能把 Rust 当作一门用于业余爱好或个人项目的语言而感兴趣。这些项目可以用来保持技术手艺的敏锐，或者也许纯粹是为了好玩。和所有爱好一样，如果不加妥善管理，投入的时间可能会多到令人不堪重负。
+本节包含若干建议，帮助你在不牺牲每一分空闲时间的前提下持续练习 Rust。
+\subsection{在线挑战}
+\label{idx:idx_a77a6702}
+在线挑战是熟悉新编程语言的一种有趣而富有成效的方式。这些网站的“挑战”部分往往偏算法性质，但用 Rust 来解题能让你在文件 I/\allowbreak{}O、字符串操作和迭代器方面得到大量练习。
+练习新语言最好的网站之一是\emph{Advent of Code}（\href{https://}{\texttt{https://}}
+\label{idx:idx_dabffd2d}
+\texttt{adventofcode.\allowbreak{}com}）。这个网站会在十二月最初几天推出主题挑战
+每年举办一次。该网站具有竞技性质，用户都力争每天以最短的时间得出正确解法。不过，往年的主题谜题均已归档，方便你按自己的节奏练习。
+\emph{Advent of Code} 的谜题在一年之中逐日提升难度，但每天都至少需要对文本输入做一些轻量的解析。这能为你提供绝佳的机会，练习编写临时解析器，以及用标准库做字符串到二进制的转换。如果你对在 Rust 中使用字符串还不够熟练，这是提升最快的途径之一。
+谜题中涉及算法的部分往往需要使用标准容器，例如 \texttt{Vec}、
+\texttt{HashMap} 和 \texttt{HashSet}。此外，它们往往还能让你练习使用诸如 \texttt{filter} 或 \texttt{map} 这样的迭代器。
+这些谜题的难度攀升很快，但每年最初几天的题目往往只需投入不多的时间就能解出。
+\label{idx:idx_0758810c}
+练习 Rust 的另一个好去处是 \emph{LeetCode}，网址为 \href{https://leetcode.com}{\texttt{https:/\allowbreak{}/\allowbreak{}leetcode.\allowbreak{}com}}。LeetCode 常被用于准备求职面试，但它同样非常适合练习编程语言。它提供数量庞大、难度各异的算法题，既能锻炼你的思维，也能锤炼你的编程语言能力。
+\label{idx:idx_20141f0d}
+最后是 \emph{Exercism}，网址为 \href{http://exercism.org}{\texttt{http:/\allowbreak{}/\allowbreak{}exercism.\allowbreak{}org}}。这个网站与 LeetCode 类似，但专门为教授编程语言而设计。网站支持的每种语言都有一条独立的学习路径和分级练习。这些练习既可以在网站上完成，也可以下载后用离线工具完成。
+\label{idx:idx_3f3d4080}
+这些网站虽然很适合练习，但你们中的不少人很快就会想投入到更有分量的项目中去。这时，我们就可以逐步转向业余项目了。
+\subsection{业余项目}
+\label{idx:idx_3789bcae}
+业余项目是练习新语言的极佳方式，而且往往卓有成效，但它们也可能很快变得复杂起来。毕竟，Rust 本身就是作为一个业余项目起步的。在本节中，我会推荐几个既有吸引力、又有助于练习 Rust，同时只需占用你一个周末左右时间的业余项目。首先是出色的 \emph{Ray Tracing in One Weekend} 系列。这套书可以在 \href{https://}{\texttt{https://}}
+\texttt{raytracing.\allowbreak{}github.\allowbreak{}io} 找到，它会循序渐进地引导读者编写一个业余光线追踪器，
+从零开始。正如书名所言，这些项目并不需要投入太多时间就能完成，却是一段容易上手的图形编程小旅程。在本书写作时，该系列已包含三本书。
+这些书使用 C++ 编写，依赖极少。用 Rust 跟着书中的内容做，需要做一些语言之间的转换，还要动点侦探般的脑筋，找出 Rust 中的惯用写法。但凭借我们在本书中打下的基础，尤其是在优化和多线程方面，有心的读者可以为这类业余光线追踪项目找到许多有趣的发展方向。
+我推荐用于练习 Rust 的另一个项目是编写一个 Z-\allowbreak{}machine。什么是 Z-\allowbreak{}machine？游戏 \emph{Zork} 于 1977 年发布，是交互式小说（interactive fiction）这一类型的首批、也最广为人知的代表作之一。作者们很聪明地把整个游戏建立在一台他们称为“Z-\allowbreak{}machine”的虚拟机之上，从而更容易移植到多种体系结构，并由此打造出一个最终被数百款其他游戏使用的开发平台。
+如今的 Z-\allowbreak{}machine 已有完善的文档，实现它能让我们稍稍了解那个逝去的游戏开发时代。完成这个项目后，我们还能在自己编写的虚拟机上玩到不少交互式小说游戏。
+\begin{myNotic}{注意}
+原版 \emph{Zork} 游戏于 2025 年 11 月以 MIT 许可证开源。许多公有领域或其他可免费获取的 Z-\allowbreak{}machine 游戏都托管在 \emph{Interactive Fiction Archive}，网址为 \href{https://www.ifarchive.org}{\texttt{https:/\allowbreak{}/\allowbreak{}www.\allowbreak{}ifarchive.\allowbreak{}org}}。下载任何游戏之前，务必仔细查看许可证条款。
+\end{myNotic}
+\label{idx:idx_88c76f2f}
+实现 Z-\allowbreak{}machine 时，最好的起点是这份标准文档，网址为 \href{https://inform-fiction.org/zmachine/standards/index.html}{\texttt{https:/\allowbreak{}/\allowbreak{}inform-\allowbreak{}fiction.\allowbreak{}org/\allowbreak{}zmachine/\allowbreak{}standards/\allowbreak{}index.\allowbreak{}html}}。该文档描述了 \emph{Zork} 所使用的第 3 版虚拟机以及后续各版本所用的指令集和数据格式。另一个好用的资源是 \textbf{CZECH} 项目，它是 \textbf{Comprehensive Z-\allowbreak{}Machine Emulation Checker}（全面的 Z-\allowbreak{}Machine 模拟检查器）的缩写。该项目为大多数指令提供了单元测试，在实现这个项目的过程中，这些测试是必不可少的调试帮手。
+\label{idx:idx_90d8918f}
+除了光线追踪器和 Z-\allowbreak{}machine，还有许多其他有趣的业余项目。复古游戏机模拟器、操作系统、数据库和玩具编程语言都是极佳的选择。不过，前面这两个项目应该能为你提供充足的 Rust 练习，同时不会占满你所有的空闲时间。在下一节中，我们将离开空闲时间里的 Rust 编程，开始讨论如何专业地使用 Rust。
+\section{在职场中驾驭 Rust}
+\label{idx:idx_664b8891}
+尽管 Rust 拥有丰富的技术价值，但对 C++ 开发者来说，在工作中引入它仍常常是一个颇具争议的选择。这往往有充分的理由，比如团队熟悉度，以及用时间、金钱和稳定性来衡量的重写遗留代码的成本。不过，虽然把 Rust 融入职业工作可能是个挑战，本节还是会提供一些建议，帮你在合适的时候更轻松地做到这一点。
+\subsection{向专业人士介绍 Rust}
+\label{idx:idx_27e62525}
+虽然我希望本书已经给了你足够多的理由为 Rust 感到兴奋，但在任何职业场合推广这门语言时，通常最好还是稳扎稳打。我们看到过来自 Microsoft、Google 等公司的报告，称其开发者用 Rust 更开心、产生的 bug 更少、花在代码评审上的时间更短，而且上手这门语言很快。但没有理由认为这种成功能在每个组织里复制。
+通常，向一个组织引入 Rust 时，最关键的一点是同理心。专业人士往往专注于自己的任务，觉得自己没有时间在工作中学习一门新语言。在没有获得认同的情况下引入任何新技术，都可能在同事中引发不满和沮丧。
+许多公司允许工程师就各种主题做报告或教程。这可以是一个绝佳的机会，来讲讲 Rust 的优缺点以及它们与你所在领域的关系。这类报告往往能引出一些讨论，帮助你判断同事们对在工作中使用 Rust 可能持何种态度。如果你在工作场所没有决策权，做一次报告尤其有帮助。
+接下来的一个小步骤，可以是找出代码库中适合改用 Rust 的部分。任何属于遗留代码、由少数几个人维护、且与代码库其余部分相对隔离的东西，都是不错的候选，尤其是当它不断引发问题时。另一些候选可能是那些潜在攻击面较大、需要加固的代码区域。
+\label{idx:idx_5b390b54}
+一旦确定了某个 Rust 能帮上忙的系统，就可以去争取相应的批准。请记住，虽然 Rust 改造在许多公司都相当成功，但在选择 Rust 之前，必须考虑性能与开发者熟悉度方面的若干取舍。此外，每一次代码重写都会带来引入新 bug 的风险。因此，必须有非常好的测试来确保行为保持稳定。
+\subsection{寻找 Rust 相关职业}
+\label{idx:idx_852b9801}
+随着这门语言越来越流行，寻找 Rust 相关职业的程序员和提供 Rust 岗位的公司都明显增多。但一个强劲的 Rust 就业市场仍在形成之中。
+不少大公司似乎选择培训现有工程师使用 Rust，而不是招聘专门的 Rust 团队。虽然关于这些公司在内部如何使用 Rust 的信息可能很少，但它们正在逐步押注 Rust。这意味着它们的工程师需要能够使用并精通多种语言。
+由此带来的结果是，能够让你只写 Rust 的职业机会可能仅限于较小的公司和初创企业。有几种很好的方法可以找到这些公司。其一，像 \href{https://rustjobs.dev}{\texttt{https:/\allowbreak{}/\allowbreak{}rustjobs.\allowbreak{}dev}} 这样专门的 Rust 招聘网站，就是专为帮助 Rust 求职者与公司牵线搭桥而创建的。
+不过，了解哪些公司正在使用 Rust，一个直接的办法是浏览
+\texttt{crates.io} 上的 crate。许多使用 Rust 的公司都愿意在开源
+生态中至少保有一定的存在感，其中就包括把他们的成果以 crate 的形式公开发布给社区。
+了解使用 Rust 的公司的另一个好办法是 \emph{Rust in Production} 播客，它在大多数播客平台上都能收听到。这档播客由 Rust 咨询公司
+\href{https://corrode.dev}{\texttt{https:/\allowbreak{}/\allowbreak{}corrode.\allowbreak{}dev}} 主持，内容是对使用 Rust 的公司代表的访谈。
+这些访谈往往很坦诚，能让人深入了解他们使用这门语言时正反两方面的经验。这档播客有趣的理由很多，同时它也能让你很好地熟悉那些可能正在招人的公司。
+\label{idx:idx_f1ff0f79}
+无论你是希望在现有岗位上引入 Rust，还是想找一份全职写 Rust 的好工作，Rust 就业市场都是一个充满活力、引人关注的领域，并且看起来将在未来几年大幅增长。与此同时，我们的 C++ 技能在职业上也不太可能很快过时。同时保持两种语言的专业能力，只会让我们成为更好的工程师、更好的求职者。
+\section{跟上 Rust 的步伐}
+Rust 是一门发展迅速的语言，拥有充满活力的社区和生态。语言的新版本每六周发布一次，出色的新 crate 几乎每天都在出现。要跟上这一切可能令人望而生畏，对忙碌的开发者来说尤其如此。在本节中，我们将谈论 Rust 社区的组织方式，以及我们如何逐周跟上这门语言的发展。
+\subsection{了解 Rust 社区}
+\label{idx:idx_d3c83847}
+与大多数语言社区一样，Rust 社区是由一群松散的个体组成的，他们共同为这门语言及其技术价值而兴奋。或许与许多社区不同，Rust 社区以对外来者友好而自豪。该项目每年开展一次社区调查，并经常发现用户在社区空间里感到受欢迎、很自在。
+许多最受欢迎的社区空间其实是非官方的。Hacker News、Reddit 和 X（原 Twitter）上经常有关于 Rust 的精彩讨论，但它们都属于非官方社区空间。官方讨论发生在 Rust 用户论坛上，网址为 \href{https://}{\texttt{https://}}
+\texttt{users.\allowbreak{}rust-\allowbreak{}lang.\allowbreak{}org/\allowbreak{}}，以及官方的 Rust Zulip 服务器上，网址为 \href{https://rust-}{\texttt{https:/\allowbreak{}/\allowbreak{}rust-\allowbreak{}}}
+\texttt{lang.\allowbreak{}zulipchat.\allowbreak{}com/\allowbreak{}}。
+虽然技术讨论常常发生在这些空间里，但 \texttt{rust-lang} GitHub 组织也被视为官方的项目空间。用户可以在这里下载源代码、提交 issue，或者为 Rust 编译器、Cargo 以及若干官方 crate 做贡献。
+\texttt{rust-lang} 组织下有一个重要的仓库，即 RFC 仓库，网址为
+\href{https://github.com/rust-lang/rfcs}{\texttt{https:/\allowbreak{}/\allowbreak{}github.\allowbreak{}com/\allowbreak{}rust-\allowbreak{}lang/\allowbreak{}rfcs}}。\textbf{Request for Comment}（\textbf{RFC}，即“意见征询”）流程，正是
+项目用来推动对语言进行重大变更的提案的方式。如果你有改进 Rust 的好点子，这里是向开发团队正式提出这些修改的地方。被接受的 RFC 通常一开始只是仅在 nightly Rust 中可用的“unstable”特性。随着实现逐渐稳固并趋于稳定，它们最终会进入语言的 stable 发行版。
+\label{idx:idx_4696599e}
+官方和非官方的社区空间，都是了解流行 crate 或新特性、并与其他 Rust 用户参与技术讨论的好途径。但我们该如何跟上这样一门发展迅速的语言呢？
+\subsection{及时掌握 Rust 的最新动态}
+\label{idx:idx_8ef739ac}
+Rust 项目深知，要跟上每六周发布一次的语言并不容易。为帮助用户应对这一点，他们制作了一份每周通讯，重点介绍 Rust 世界里近期的动态。这份名为 \emph{This Week in Rust} 的通讯位于 \href{https://}{\texttt{https://}}
+\texttt{this-\allowbreak{}week-\allowbreak{}in-\allowbreak{}rust.\allowbreak{}org/\allowbreak{}}。每周都会刊载博客文章、教程和项目动态，内容都与
+Rust 有关。
+Rust 项目还尽力让语言的新版本易于消化理解。每次 Rust 发布都会附上详尽的发布说明，以及一篇重点介绍新特性和亮点的小博文。这些内容常常会介绍本次发布中稳定下来的 API，以及任何重大的新特性。如果你在生产环境中依赖某个 Rust 版本部署，那你还应该关注 beta 版本。每次发布都会在 beta 频道中停留六周，可通过 \texttt{rustup} 获取。beta 期让 Rust 开发者和语言用户都有机会在特性以 stable 形式发布之前对其加以评估。如果你想升级到最新的 Rust 版本，这是确保升级“不会损害你的部署”的绝佳方式。
+\label{idx:idx_b9141d0d}
+跟上 Rust 可能是个挑战，尤其是当你并不在职业环境中每天使用它时。不过，有了社区空间、发布说明和每周通讯，你很容易挑选出最适合自己的方式来保持更新。
+\section{小结}
+纵观全书，我们探讨了 Rust 作为一门编程语言的诸多方面、与其配套的工具和库，以及围绕它的激动人心的软件生态。我希望你收获的不只是对 Rust 所作设计选择和技术取舍的由衷敬意，还有一个坚实的基础——你可以在此基础上精通 Rust，让它与你的 C++ 技能相辅相成。
+最重要的是，我希望你现在已经把 Rust 视为解决问题时工程工具箱中的一件工具。这个世界亟需更好的软件，而每一件能帮助我们打造更好软件的工具都弥足珍贵。虽然 Rust 不是唯一能帮到我们的工具，但它在安全和系统编程领域已经站稳脚跟，并且发展迅速。
+也许 Rust 会成为你职业工作中不可或缺的一部分。也许你只是把它当作一门玩具语言，用于今后的业余项目。也许你会选择向开源生态贡献 Rust 代码。无论你作何选择，我都要感谢你允许我们一同度过与 Rust 相伴的这些时光，也希望你能运用本书所学，打造出优秀的软件。
+\needspace{26\baselineskip}
+\begin{samepage}
+\subsection{获取本书的 PDF 版本及更多内容}
+扫描二维码（或访问 \texttt{packtpub.\allowbreak{}com/\allowbreak{}unlock}）。按书名搜索本书，确认版本，然后按照页面上的步骤操作。
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\emph{注意：请备好你的发票。直接从 Packt 购买则无需发票。}
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\end{samepage}

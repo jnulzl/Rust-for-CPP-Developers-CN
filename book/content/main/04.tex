@@ -1,0 +1,345 @@
+虽然我们一直在探讨的 Rust 安全模型让我们对程序的正确性更有信心，但 Rust 用起来如此令人愉快的一大原因，是它的构建与打包工具 Cargo。Rust 和 Cargo 选择了“约定优于配置”，让项目创建、依赖管理和发布都变得直截了当。
+本章将涵盖以下主要主题：
+\begin{itemize}
+  \item 组织 Rust 项目结构
+  \item 使用依赖
+  \item 发布 crate
+  \item 探索 Cargo 的能力
+\end{itemize}
+\section{技术要求}
+本章的示例使用 Rust 1.\allowbreak{}82.\allowbreak{}0，但它们在任何更新的版本上也能正常工作。如果你在安装 Rust 时需要帮助，请参阅\emph{附录}。
+\section{组织 Rust 项目结构}
+\label{idx:idx_bcb535e9}
+我们读到过 Rust 项目采用“约定优于配置”，但这究竟是什么意思？在 C++ 项目中，构建需要列出每个必须编译的单独文件，并且可能要为每个文件提供各不相同的一组编译标志、包含路径和预处理器定义。这会导致配置过载，也催生了若干种不同的构建系统，它们试图以各自的方式管理这种复杂性。相比之下，Rust 把构建过程保持得很简单：它围绕少量配置以及对项目结构的一组约定进行标准化，从而理解如何构建每个 crate。本节中，我们将探究 Rust 如何组织 crate，以及这种结构如何影响编译器的构建内容。
+\subsection{创建一个基本项目}
+\label{idx:idx_4337652d}
+在前面的章节中我们已经看到，在命令行用 Cargo 创建一个新的 Rust 项目非常简单：
+\begin{codeboxdark}
+$ cargo new my_bin_project
+\end{codeboxdark}
+这会在当前工作目录下创建一个名为 \texttt{my\_\allowbreak{}bin\_\allowbreak{}project} 的新二进制 crate。二进制 crate 代表一个单一的原生应用程序。
+而库（library）crate 则用于作为其他 crate 的依赖，很像 C++ 里的静态库。如果我们想创建的是库 crate，可以使用这条命令：
+\begin{codeboxdark}
+$ cargo new --lib my_lib_project
+\end{codeboxdark}
+无论你创建的是二进制 crate 还是库 crate，\texttt{cargo new} 命令都会为你建立所需的最小文件结构。对于二进制 crate，它会创建一个包含 \texttt{"Hello World"} 示例的小型 \texttt{main} 函数；对于库 crate，它会创建一个简单且能通过的单元测试。
+如果我们想把 Git 作为主要的版本控制系统，\texttt{cargo new} 命令默认还会创建一个 Git 仓库和一个 \texttt{.gitignore} 文件。
+\subsection{crate 的文件结构}
+\label{idx:idx_7d168d97}
+查看由 \texttt{cargo new} 命令创建的 \texttt{my\_\allowbreak{}lib\_\allowbreak{}project} 中的文件，我们看到一个简单库 crate 具有如下文件：
+\begin{codeboxdark}
+Cargo.toml
+src/lib.rs
+\end{codeboxdark}
+\label{idx:idx_506a0817}
+\label{idx:idx_9fb464aa}
+\texttt{Cargo.toml} 文件指定了关于我们 crate 的一些元数据，包括名称和版本号。当我们开始为程序添加依赖时，依赖也会存放在这个文件里。Cargo 使用 \textbf{TOML} 配置语言，它被设计得轻量且便于人工编辑。TOML 格式的说明可以在它的网站上找到：
+\href{https://toml.io/}{\texttt{https:/\allowbreak{}/\allowbreak{}toml.\allowbreak{}io/\allowbreak{}}}。
+查看 \texttt{my\_\allowbreak{}bin\_\allowbreak{}project} 中的文件，我们看到非常相似的结构：
+\begin{codeboxdark}
+Cargo.toml
+src/main.rs
+\end{codeboxdark}
+这里我们第一次看到 Rust 利用 crate 的结构来决定如何构建它。\texttt{Cargo.toml} 文件里没有任何配置指明这个 crate 是二进制还是库。编译器根据在文件系统中是否遇到
+\texttt{main.rs} 或 \texttt{lib.rs} 文件，来决定构建哪一种。
+要执行构建，我们可以在 shell 中运行 \texttt{cargo build} 命令。这条命令在任何配置正确的 crate 的根目录下都能工作，它会调用编译器，在项目的 \texttt{target} 文件夹中生成原生二进制文件或库。这条命令还接受各种参数，其中最常用的大概是 \texttt{--release}，它指示 Cargo 执行优化构建：
+\begin{codeboxdark}
+$ cargo build --release
+\end{codeboxdark}
+\label{idx:idx_e9258c78}
+对经验丰富的工程师来说这或许显而易见，但在评估运行时性能时，务必使用发布构建。互联网上各个 Rust 讨论论坛里，充斥着那些没意识到 \texttt{cargo build} 默认生成未优化二进制的用户提出的问题！
+\subsection{理解模块}
+\label{idx:idx_e871ef3a}
+\label{idx:idx_d4f300ce}
+如果 Rust 的构建系统只允许整个项目有一个源文件，那就太不方便了。Rust 在这里的策略，不像 C++ 那样是在链接期把一组松散关联的源文件拼接起来，而是一种结构更正式的方案，称为\textbf{模块}。
+编译器总是从 crate 的根文件开始，无论是 \texttt{main.rs} 还是 \texttt{lib.rs}。这个根源文件可以用 \texttt{mod} 关键字为 crate 添加一个模块。该关键字会让编译器从 crate 的 \texttt{src} 文件夹中的特定位置拉入一个与模块名匹配的源文件。
+下面给我们之前创建的 \texttt{my\_\allowbreak{}bin\_\allowbreak{}project} crate 添加一个模块，看一个例子。把 \texttt{src/main.rs} 文件修改成下面这样：
+\begin{codebox}[rust]
+mod greeting;
+fn main() {
+    println!("Hello, world!");
+}
+\end{codebox}
+当然，我们还没有为 \texttt{greeting} 创建任何源文件，所以如果尝试运行 \texttt{cargo build} 命令，编译器会毫不意外地报错。这个错误包含一条非常有用的信息，告诉我们需要接着做什么：
+\begin{codebox}[rust]
+help: to create the module `greeting`, create file "src/greeting.rs" or "src/
+greeting/mod.rs"
+\end{codebox}
+如我们所见，Rust 允许模块有两个可能的源文件位置。使用 \texttt{src/}
+\texttt{greeting/\allowbreak{}mod.\allowbreak{}rs} 文件，如果我们打算在
+\texttt{greeting} 下再嵌套更多模块，这样写可能更合理；但结构简单的项目可以直接改用 \texttt{src/\allowbreak{}greeting.\allowbreak{}rs} 文件。我们继续为项目添加 \texttt{src/\allowbreak{}greeting.\allowbreak{}rs}，内容如下：
+\begin{codebox}[rust]
+const GREETING: &str = "Hello World!";
+\end{codebox}
+我们还会把 \texttt{main} 函数改成下面这样：
+\begin{codebox}[rust]
+fn main() {
+    println!("{}", greeting::GREETING);
+}
+\end{codebox}
+\label{idx:idx_9426c06a}
+\label{idx:idx_560f9930}
+我们已经用模块名限定了新的 \texttt{GREETING} 常量的作用域，并用它替换了硬编码的问候语。这样就完成了吗？运行 \texttt{cargo build} 检查一下：
+\begin{codeboxdark}
+error[E0603]: constant `GREETING` is private
+\end{codeboxdark}
+我们又发现了 Rust 模块的另一个特性：默认情况下，模块会向项目中的其他源文件隐藏自己的内容。这是 Rust 区分公有接口与私有接口的方式。若要让某个标识符能在模块之外被访问，必须用 \texttt{pub} 关键字显式标注它。回到 \texttt{src/\allowbreak{}greeting.\allowbreak{}rs}，我们可以做出所需的修正：
+\begin{codebox}[rust]
+pub const GREETING: &str = "Hello World!";
+\end{codebox}
+经过这一修改，我们的项目现在能正常构建、运行，并如预期般打印出 \texttt{"Hello World!"}。
+如前所述，模块可以嵌套。作为练习，试着给 \texttt{src/}
+\texttt{greeting.rs} 添加一个子模块，方法是在其中使用 \texttt{mod} 关键字。请记住，编译器的错误信息
+能在每一步为你提供指引。
+\subsection{使用二进制程序}
+\label{idx:idx_8f713334}
+通常，一个二进制 crate 会被构建成单个可执行文件，其名称与 crate 相同。\texttt{main} 函数位于 \texttt{src/main.rs} 中，它充当 crate 所产出的可执行文件的入口点。
+\label{idx:idx_ba10d8ff}
+但有时我们也可能希望为一个库 crate 添加一个或多个二进制程序。Cargo 允许这样做：它把 \texttt{src/bin/} 目录中的任何文件都视为一个独立的二进制程序。这些程序可以导入我们的库 crate，并通过其公有 API 与之交互。
+当 crate 中含有任何二进制程序时，我们可以把 \texttt{cargo run} 命令当作一条方便的捷径。该命令会在必要时构建二进制程序，然后立即调用它，并传入我们提供的任何参数。与 \texttt{cargo build} 一样，若要使用优化后的二进制程序，必须传入 \texttt{--release} 标志。\texttt{cargo run} 的一个用法示例，包括传给最终程序的参数，可能如下所示：
+\begin{codeboxdark}
+$ cargo run --release -- --test
+\end{codeboxdark}
+\texttt{--} 之后的内容会直接传给所运行的程序，而它之前的内容则是 \texttt{cargo run} 命令本身的参数。
+我们看到，在 \texttt{src/bin/} 目录中可以有多个二进制程序与我们的 crate 关联。如果我们利用这个特性，在 \texttt{src/bin/} 目录里放一个 \texttt{test.rs} 文件，就可能让 Cargo 陷入不知道我们想运行哪个二进制程序的境地。为此，Cargo 提供了 \texttt{--bin} 选项，可以传给 \texttt{cargo run} 来指定要运行哪个二进制程序：
+\begin{codeboxdark}
+$ cargo run
+error: `cargo run` could not determine which binary to
+run. Use the `--bin` option to specify a binary, or the `default-run` manifest
+key.
+available binaries: hello_world, test
+\end{codeboxdark}
+如我们所见，Cargo 的错误信息会告诉我们可指定哪些二进制程序，以及如何在 \texttt{Cargo.toml} 配置文件中指定默认的二进制程序。
+既然我们已经理解了 Rust 如何利用 crate 文件夹中的文件结构进行构建，接下来看看 Cargo 另一个极其重要的功能：\textbf{管理依赖}。
+\section{使用依赖}
+\label{idx:idx_4128b7f8}
+除了安全保证之外，Rust 的主要优势之一是拥有一个庞大且集中式的仓库，其中存放着社区贡献的 crate，可以直接从 Cargo 访问。本节我们将学习如何找到有用的依赖，并用 Cargo 把它们导入到项目中。
+\subsection{探索 Rust 的社区 crate}
+\label{idx:idx_f6332a58}
+Rust 社区贡献的 crate 由一个\textbf{注册表}（registry）建立索引，默认的 Rust 注册表位于 \href{https://crates.io/}{\texttt{https:/\allowbreak{}/\allowbreak{}crates.\allowbreak{}io/\allowbreak{}}}。在 C++ 中，我们的依赖可能散落在数十个网站上，并使用许多不同的配置方式；而在 Rust 里，这个中心化注册表托管着成千上万个不同的 crate，每一个都能用几条简单的命令导入到我们的项目中。
+当然，我们不会想随便哪一个都照单全收。我们必须找到一组在许可、成熟度和功能方面符合我们特定标准的 crate。搜索满足需求的 crate，可以在 \texttt{crates.io} 网站上进行，也可以舒舒服服地坐在终端里通过 \texttt{cargo search} 命令来完成：
+\begin{codeboxdark}
+$ cargo search chess
+\end{codeboxdark}
+运行该命令时，Cargo 会输出一个包含若干国际象棋相关库的列表。
+\texttt{cargo search} 命令很有用，但它只显示 crate 的名称和简短描述。用网站来搜索往往收获更大。对于被
+\texttt{crates.io} 建立索引的每个 crate，你都能看到它的许可证、浏览量和下载量，以及指向
+文档和源码仓库的链接。
+\label{idx:idx_79e0c431}
+从互联网上快速找到并导入依赖时必须谨慎，即使它们托管在值得信赖的注册表上也是如此。只有许可证兼容的包才能添加到我们的项目中，而且每个项目可能都需要对其使用的依赖做一次安全审查。不过对于探索性编程和随手的日常开发，官方 Rust crate 注册表通常都能提供有价值的东西，只有最专门的场景例外。
+\subsection{用 Cargo 管理依赖}
+\label{idx:idx_94da1eac}
+Cargo 提供了几条用于管理依赖的实用命令。\texttt{cargo add} 和
+\texttt{cargo rm} 功能是最容易上手的起点。假设我们想添加 \texttt{anyhow}，它是一个
+流行的错误处理 crate。我们可以使用这样一条命令：
+\begin{codeboxdark}
+$ cargo add anyhow
+\end{codeboxdark}
+Cargo 会在注册表中搜索最新版本，并把它作为依赖添加到我们的 crate 中。它通过编辑 \texttt{Cargo.toml} 文件的 \texttt{dependencies} 段来完成这件事。查看该文件，我们可能会看到类似这样的内容：
+\begin{codebox}[text]
+[dependencies]
+anyhow = "1.0.89"
+\end{codebox}
+依赖的版本很可能因命令运行的时间不同而不同，但结构是一样的。下次构建 crate 时，\texttt{anyhow} crate 及其依赖也会被下载并编译，\texttt{anyhow} 的公有接口将可供我们的 crate 使用。
+如果我们改变主意，觉得项目里不再需要这个依赖，可以运行 \texttt{cargo}
+\texttt{rm anyhow} 把它从 \texttt{Cargo.toml} 中移除。
+\subsection{配置依赖}
+\label{idx:idx_56ce6d20}
+运行前面的命令时，你可能见过类似这样的输出：
+\begin{codeboxdark}
+Adding anyhow v1.0.89 to dependencies
+       Features:
+       + std
+       - backtrace
+\end{codeboxdark}
+这里，\texttt{cargo add} 显示了该 crate 用到的 feature。一个\textbf{feature} 代表 crate 中某个可配置的方面。如果某项功能属于并非所有用户都需要的进阶功能、尚处于实验阶段，或者已知会显著影响编译时间，那么它常常会被放在某个 feature 之后。
+应当查阅每个 crate 的文档，了解各个 feature 的作用以及启用它的后果。如果你发现想启用某个 feature，可以使用 \texttt{--}
+\texttt{features} 标志，像这样与 \texttt{cargo add} 命令一起使用：
+\begin{codeboxdark}
+$ cargo add anyhow --features backtrace
+\end{codeboxdark}
+查看 \texttt{Cargo.toml}，我们会看到依赖项已变为如下内容：
+\begin{codebox}[text]
+[dependencies]
+anyhow = { version = "1.0.89", features = ["backtrace"] }
+\end{codebox}
+如果我们改变主意，想启用别的 feature，有几种选择，包括手动编辑 \texttt{Cargo.toml} 文件；或者先用 \texttt{cargo rm} 移除，再用一组不同的 feature 重新添加该依赖。
+\subsection{添加非 Rust 依赖}
+\label{idx:idx_6a9cbb19}
+任何一次构建的全部复杂性，都无法仅靠 \texttt{Cargo.toml} 里那一点信息以及 crate 中提供的文件结构来表达。一个常见的例子是链接并非用 Rust 编写的依赖。例如，链接一个用 C 编写的库，可能需要用特殊的编译器标志编译若干个单独的 C 文件，然后向链接器提供信息，表明我们需要把这些文件链接进最终的二进制程序。
+Rust 用来解决这些难题的机制是 \texttt{build.rs} 文件，它位于 crate 的根目录中。这个文件本质上是一个程序，其职责是执行程序所需的任何自定义构建步骤，并把任何变更通知给 Cargo。
+如果 crate 的根文件夹中存在 \texttt{build.rs} 文件，Cargo 会把它编译成二进制程序，然后运行生成的命令。它会监视 \texttt{stdout} 以及构建程序的返回码。如果它发生 panic 或以任何方式异常退出，Cargo 就会中止 crate 的构建。如果构建程序成功执行，Cargo 会检查它写入 \texttt{stdout} 的那些行，寻找额外的构建指令。
+\label{idx:idx_a601076a}
+这套机制很灵活，但也带来一些缺点。设置得不够理想的构建程序会给每次构建增加大量时间。此外，构建程序的执行没有任何防护，这使它成为恶意 crate 用来攻击用户系统的潜在途径。
+有若干 crate 专门设计为在 \texttt{build.rs} 文件内部使用，通常用于执行编译或预处理任务。为此目的而构建的较流行的 crate 之一是 \texttt{cc} crate，它调用 C 或 C++ 编译器，并通知 Cargo 把生成的库链接进我们的 crate。
+要添加它，我们可以使用这条命令：
+\begin{codeboxdark}
+$ cargo add cc --build
+\end{codeboxdark}
+通过传入 \texttt{--build}，我们把这个 crate 限制为只能用于开发场景，例如
+\texttt{build.rs} 文件。如果我们试图在 crate 中直接使用它，就会发现它并不可用。
+使用 \texttt{cc} 的一个简单 \texttt{build.rs} 文件可能如下所示：
+\begin{codebox}[rust]
+fn main() {
+    cc::Build::new()
+        .file("src/hello.c")
+        .compile("hello");
+}
+\end{codebox}
+\label{idx:idx_0c5153d5}
+有了这个构建程序，我们就能通过在 crate 中导入 \texttt{hello} 库来访问 \texttt{hello.c} 里的函数。虽然这个小例子让我们大致了解如何用 Cargo 构建 C 和 C++ 代码，但要从 Rust 中访问 C 和 C++ 函数是个更大的话题，我们将在\emph{第 9 章}中完整探讨。
+我们已经探讨了在 crate 中管理和使用依赖的若干方面，接下来看看如何发布我们自己的依赖，供他人使用。
+\section{发布 crate}
+\label{idx:idx_147c0b5a}
+做出有用的库或程序之后，我们可能希望与更广大的 Rust 社区分享它。这可以通过把它发布到某个 Cargo 注册表来实现。大多数情况下我们会使用位于 \texttt{crates.io} 的官方 Rust 注册表，但某些组织内部也可能提供内部注册表。
+\subsection{创建账号}
+\label{idx:idx_62596567}
+每个注册表创建账号的方式各不相同。在撰写本书时，官方 Cargo 注册表只允许用户使用 GitHub 账号登录。可以在 \href{https://github.com/}{\texttt{https:/\allowbreak{}/\allowbreak{}github.\allowbreak{}com/\allowbreak{}}} 上注册一个 GitHub 账号。使用 GitHub 超出了本书的范围，但它也能为存放 crate 源代码的 Git 仓库提供托管服务。
+账号创建好之后，我们可以使用 \texttt{cargo login} 命令来获得对所选定注册表的访问权限。用默认配置调用它，我们会看到如下内容：
+\begin{codeboxdark}
+$ cargo login
+please paste the token found on https://crates.io/me below
+\end{codeboxdark}
+\label{idx:idx_a09a16e9}
+浏览给出的链接，我们会获得一个访问令牌。把它粘贴到终端后，该密钥会被保存在 \texttt{\textasciitilde{}/\allowbreak{}.\allowbreak{}cargo/\allowbreak{}credentials.\allowbreak{}toml} 文件夹中，我们就能使用需要特权的 Cargo 命令与注册表交互。当然，妥善保护这个登录令牌很重要。如果它被恶意用户获取，带有后门或其他安全问题的 crate 新版本就可能被发布给我们的最终用户。需要时我们可以用 \texttt{cargo logout} 命令删除本地的凭据文件，但如果令牌确实泄露了，就应立即从注册表网站上吊销它。
+\subsection{为发布准备 crate}
+\label{idx:idx_1bc33b90}
+\texttt{cargo package} 命令可用于为发布准备 crate。该命令会确保满足所有要求，构建 crate 以确认它能编译通过，并创建一个将被推送到仓库的归档文件。
+\begin{myNotic}{注意}
+如果你使用 Git 进行版本控制，那么务必在尝试运行 \texttt{cargo package} 命令之前，确保所有更改都已提交到本地仓库。
+\end{myNotic}
+为了帮助他人在 crate 发布后找到并理解它的用途，可以向 \texttt{Cargo.toml} 中添加若干元数据标签。\texttt{cargo package} 命令会检查常见的几项，并在缺失时通知你。对 \texttt{my\_\allowbreak{}lib\_\allowbreak{}project} 运行它，我们会看到如下内容：
+\begin{codeboxdark}
+$ cargo package
+warning: manifest has no description, license, license-file, documentation,
+homepage or repository.
+See https://doc.rust-lang.org/cargo/reference/manifest.html#package-metadata for
+more info.
+\end{codeboxdark}
+这些元数据标签放在 \texttt{Cargo.toml} 文件的 \texttt{[package]} 段中。每一项都有各自期望的格式或版本。对于我们的 \texttt{my\_\allowbreak{}lib\_\allowbreak{}project} crate，我们可以这样做：
+\begin{codebox}[rust]
+[package]
+name = "my_lib_project"
+version = "0.1.0"
+description = "Example of a library crate"
+license = "MIT OR Apache-2.0"
+\end{codebox}
+\label{idx:idx_2dbabbef}
+我们可以按需添加任意多或任意少的元数据标签，但要记住，这些标签能帮助他人在搜索中定位我们的 crate。文档、主页、仓库之类的信息对我们 crate 的用户都很有帮助。这些标签的文档可在 \texttt{cargo package} 命令显示的 URL 处获取。
+\subsection{理解语义化版本}
+\label{idx:idx_8fecfffe}
+\label{idx:idx_53d877f0}
+\label{idx:idx_03575d81}
+如果我们多看过一些 Rust 依赖的版本号，就会发现它们都由三个数字组成，数字之间用句点或小数点分隔。Rust 中的版本号遵循\textbf{语义化版本}（semantic versioning）的概念。这个概念在 \href{https://}{\texttt{https://}}
+\texttt{semver.org/} 有详细探讨，但由于它对 Rust 生态的重要性，我们将简要介绍一些基本要点
+在此。
+\label{idx:idx_2139029e}
+\label{idx:idx_8631aae5}
+\label{idx:idx_662755a2}
+语义化版本从我们看到的这三个数字开始，从左到右依次称为\textbf{主版本号}、\textbf{次版本号}和\textbf{修订号}。由 Cargo 创建的每个 crate 都从 \texttt{0.1.0} 开始，即主版本号为 \texttt{0}、次版本号为 \texttt{1}、修订号为 \texttt{0}。每当发布 crate 的新修订版时，版本号都应改变，而它具体变成什么由语义化版本的规则决定。
+只要 crate 的公有 API 发生破坏性更新，就必须递增主版本号。这个版本号有意从 \texttt{0} 开始，意味着该 crate 还没有稳定的公有 API，仍处于开发阶段。但一旦达到 \texttt{1.0.0}，crate 的公有 API 就被视为稳定，此后任何向后不兼容的更改都必须提升主版本号，并把次版本号和修订号重新设回 \texttt{0}。
+当公有 API 有任何向后兼容的新增时，必须递增次版本号。当 crate 有重要的 feature 新增或改进时，也可以递增次版本号。递增次版本号时，必须把修订号重新设回 \texttt{0}。
+\label{idx:idx_bc4e6bdc}
+\label{idx:idx_caf81e31}
+剩下的就只有修订号了，它在修复不改变 crate 公有 API 的 bug 时递增。这套关于每个版本号可以、不可以更新什么的规则，被 Cargo 用来在解析依赖时决定应使用 crate 的哪个版本。严格遵循语义化版本规则，应能尽量减少选择把该 crate 作为依赖的项目遇到的麻烦和破坏。
+既然我们已经成功登录仓库、用 Cargo 创建了包，并为 crate 选好了正确的版本号，现在该把它发送到仓库，供他人使用了。
+\subsection{将 crate 发送到仓库}
+\label{idx:idx_7b138472}
+在准备发送 crate 时，我们必须完成此刻所需的各项最终检查，确保发送出的正是我们期望的内容。一旦 crate 被推送到仓库，项目中的文件就会对互联网上的所有人可见，而且可能是无限期地可见。
+\texttt{cargo package -\allowbreak{}-\allowbreak{}list} 命令可用于复核包中包含了哪些文件。此时检查一下没有把密钥或任何其他敏感数据文件包含进去，是很有必要的。
+最后，经过这么多准备工作，真正发布这一步反而有点波澜不惊。我们只需运行 \texttt{cargo publish} 命令，crate 就会被发送到仓库，并立即可供他人使用。
+在某些紧急情况下，crate 的作者可能希望从 Cargo 注册表中移除某个有问题的版本。这可能包括误发布的版本、无意中破坏了语义化版本规则、许可问题，或者任何必须阻止其他 crate 把某个已发布版本用作依赖的紧急情况。
+\label{idx:idx_4c74ec48}
+要从 Cargo 注册表中\textbf{撤回}（yank）或移除某个已发布的版本，Cargo 提供了 \texttt{cargo yank} 命令。需要注意，这并不会删除任何已发布的文件，也无法阻止任何可能被无意中放进 crate 包里的内容被分发。但撤回 crate 确实能阻止新用户添加对它的依赖。
+既然我们已经理解了发布工作流，下面来看看 Cargo 提供的一些实用工具，它们并不直接涉及构建项目或其依赖。
+\section{探索 Cargo 的能力}
+\label{idx:idx_ce992405}
+Cargo 让构建和依赖管理变得简单，同时它还拥有许多其他能力，可用于改善我们的 Rust 开发体验。本节我们将探索 Cargo 几个最有用的功能，并研究如何扩展它以提供更大的效用。
+\subsection{把 Cargo 用作测试运行器}
+\label{idx:idx_ce7a80bd}
+Cargo 作为 Rust crate 的测试运行器，扮演着重要的角色。下面简要看看它如何工作，以我们之前创建的 \texttt{my\_\allowbreak{}lib\_\allowbreak{}project} crate 为例：
+\begin{codebox}[rust]
+$ cargo test
+running 1 test
+test tests::it_works ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;
+finished in 0.00s
+\end{codebox}
+这段输出经过截断，只显示最重要的部分。我们正在运行一个名为
+\texttt{it\_works} 的测试，它是由 \texttt{cargo new} 为我们生成的。令人高兴的是，它通过了。
+如果打开 \texttt{my\_\allowbreak{}lib\_\allowbreak{}project} crate 中的 \texttt{src/lib.rs}，我们会看到如下内容：
+\begin{codebox}[rust]
+pub fn add(left: u64, right: u64) -> u64 {
+    left + right
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn it_works() {
+        let result = add(2, 2);
+        assert_eq!(result, 4);
+    }
+}
+\end{codebox}
+\label{idx:idx_64045762}
+我们看到的是一种常见模式：把测试放在与代码相同的源文件里。首先用 \texttt{mod} 关键字创建一个名为 \texttt{tests} 的内联子模块。这个模块用 \texttt{\#[\allowbreak{}cfg(\allowbreak{}test)\allowbreak{}]\allowbreak{}} 标注，它告诉编译器只有在我们以测试配置运行时才编译它。
+通过 \texttt{use super::\allowbreak{}*;\allowbreak{}}，我们在 tests 子模块内部导入父模块的 API，这样就能直接调用其中的函数，而无需任何其他修饰。最后，我们用 \texttt{\#[test]} 标记指定一个函数作为测试。虽然子模块和配置守卫很方便，但如果没有 \texttt{\#[test]} 标记，测试就不会运行。
+\subsection{用 Cargo 安装软件}
+\label{idx:idx_d820d75c}
+除了\emph{构建}和\emph{测试}任务之外，Cargo 还能用来把二进制 crate 安装到系统路径中。虽然这需要在本机编译软件，但往往是在本地机器上安装各种有用程序的简便方法。它也为开发者提供了一种低成本的软件分发方式，至少在 Rust 社区范围内如此。Cargo 提供了两个子命令来管理这一功能：\texttt{cargo install} 和 \texttt{cargo}
+\texttt{uninstall}。举个例子，我们可以用这条命令安装 \texttt{ripgrep}，一个备受推崇的 Rust
+文本文件搜索程序：
+\begin{codeboxdark}
+$ cargo install ripgrep
+\end{codeboxdark}
+\label{idx:idx_3f69a0c9}
+只传入 crate 名称时，\texttt{install} 命令会在 \texttt{crates.io} 上搜索已发布的 crate，把它下载到 \texttt{temp} 文件夹、编译它，并将生成的二进制程序放到与 \texttt{cargo} 可执行文件本身相同的文件夹中，从而确保它进入系统路径。
+过程完成后，我们可以执行下面这条命令，显示以这种方式安装的全部 crate 列表、它们的版本号，以及生成的各可执行文件的名称：
+\begin{codeboxdark}
+$ cargo install --list
+\end{codeboxdark}
+就 \texttt{ripgrep} 而言，我们会发现所安装命令的名称是 \texttt{rg}，如果使用 Windows 则是 \texttt{rg.exe}。
+\texttt{cargo install} 命令还可以从远程 Git 仓库甚至本地路径安装 crate，只要传入正确的参数。与 Cargo 的所有子命令一样，我们可以通过 \texttt{--help} 标志获取详细用法信息：
+\begin{codeboxdark}
+$ cargo install --help
+\end{codeboxdark}
+\texttt{cargo uninstall} 命令要简单得多。只需传入你想卸载的 crate 名称，Cargo 就会通过删除所有关联的二进制程序把它从你的路径中移除：
+\begin{codeboxdark}
+$ cargo uninstall ripgrep
+\end{codeboxdark}
+当然，这只会移除对由 Cargo 维护的那份软件副本的引用。如果我们通过其他程序或安装器重复安装了同一个程序，Cargo 会完全不去动那些副本。
+\subsection{vendoring 依赖}
+\label{idx:idx_e70ddb15}
+在默认配置下，Cargo 会从互联网下载依赖到本地缓存中。根据我们工作的性质，让 Cargo 以离线模式运行、改为从文件系统上的本地目录获取所有依赖、而不去下载它们，可能更为可取。这样做的好处是：无论是外部网站或服务的可用性，还是 crate 维护者的随意变动，都绝不会导致我们无法构建项目。
+\label{idx:idx_a763aeff}
+这种预先下载依赖、以提供一套锁定且始终可用的依赖集合的做法叫做\textbf{vendoring}，Cargo 有一个 \texttt{vendor} 子命令来协助这一过程。只需在 shell 中调用该命令即可：
+\begin{codeboxdark}
+$ cargo vendor
+\end{codeboxdark}
+这会把我们的 crate 所依赖的所有依赖下载到 crate 根文件夹下的 \texttt{vendor/} 文件夹中。Cargo 会确保该文件夹中的依赖列表与程序所需完全一致，包括删除之前运行 \texttt{cargo vendor} 命令时留下的、因我们所做的更改而不再需要的任何文件夹。
+每次运行时，\texttt{cargo vendor} 还会告诉我们，需要把一些配置添加到名为 \texttt{.\allowbreak{}cargo/\allowbreak{}config.\allowbreak{}toml} 的文件中。要使用通过调用该命令下载并整理好的依赖，这套配置是必需的。这些配置行只需添加一次。如果我们不再想使用 vendoring 的依赖，只需删除 \texttt{vendor/} 文件夹，并从 \texttt{config.toml} 中移除所需的那些行即可。
+\subsection{用插件扩展 Cargo}
+\label{idx:idx_4d0e236d}
+虽然 \texttt{install}、\texttt{vendor} 这类命令直接内建于程序之中，但 Cargo 从设计上就允许通过社区贡献的子命令（称为\textbf{插件}）来扩展。每当 Cargo 遇到它无法识别的子命令时，就会在系统路径中查找与该命令同名的二进制文件。例如，在命令行中调用 \texttt{cargo plugin} 会让 Cargo 在本机查找名为 \texttt{cargo-\allowbreak{}plugin} 的可执行文件，找到就执行它。
+\label{idx:idx_244938e4}
+编写插件超出了本章的范围，但了解 Cargo 的这一功能很重要。你可以在 \texttt{crates.io} 上找到流行的插件，既可以用网页浏览器搜索，也可以借助 Cargo 自身执行搜索。所有插件都以 \texttt{cargo-} 前缀开头，因此可以用类似下面这样的命令来查找：
+\begin{codeboxdark}
+$ cargo search cargo-
+\end{codeboxdark}
+\label{idx:idx_eace3c12}
+Cargo 还有许多其他有趣的方面。本章我们只能探讨其中最常见、最有用的部分。给 Cargo 传入 \texttt{--list} 选项会显示所有可用的命令，而 \texttt{cargo help} 命令则能对每个命令给出详细的说明。如需在线文档，欢迎查阅位于以下地址的 Cargo 手册：
+\href{https://doc.rust-lang.org/cargo/}{\texttt{https:/\allowbreak{}/\allowbreak{}doc.\allowbreak{}rust-\allowbreak{}lang.\allowbreak{}org/\allowbreak{}cargo/\allowbreak{}}}.
+\section{小结}
+在本章中，我们学会了如何用 Cargo 创建新项目、为项目添加模块和依赖，以及发布自己的代码供世界各地的 Rust 开发者使用。接着，我们考察了如何用 Cargo 测试 crate 并在自己的机器上安装新软件。最后，我们了解了如何用 Cargo 对我们的依赖进行 vendoring，以及如何扩展它以加入更多改进。
+下一章我们将考察 Rust 标准库如何实现常见的数据结构和容器。
+\needspace{26\baselineskip}
+\begin{samepage}
+\subsection{获取本书的 PDF 版本及更多内容}
+扫描二维码（或访问 \texttt{packtpub.\allowbreak{}com/\allowbreak{}unlock}）。按书名搜索本书，确认版本，然后按照页面上的步骤操作。
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\emph{注意：请把发票备在手边。直接从 Packt 购买的订单无需发票。}
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\end{samepage}

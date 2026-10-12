@@ -1,0 +1,625 @@
+既然我们已经了解了 Rust 能带来的好处，现在该开始考察语法了。在本章中，我们将结合对应的 C++ 代码来说明 Rust 的基本语法概念。在接下来的代码示例中，我们会先展示每个概念的 Rust 语法，并尽可能给出我们在 C++ 中能写出的最接近的等价写法。把两种语言放在一起看，理解它们之间的异同就会容易得多。
+我们将大致按与 C++ 的相似程度来安排这些主题，从最相似的讲到最不相似的。
+在本章中，我们将涵盖以下主要主题：
+\begin{itemize}
+  \item 声明变量与结构体
+  \item 使用函数与方法
+  \item 在程序中移动
+  \item 理解泛型编程
+  \item 学习模式匹配
+\end{itemize}
+\section{技术要求}
+本章的示例使用 Rust 1.\allowbreak{}82.\allowbreak{}0，但它们在任何更新的版本上也能正常工作。如果你需要安装 Rust 方面的帮助，请参阅\emph{附录}。
+Rust 代码也可以输入到 Rust Playground 中，它在线提供，地址是 \href{https://}{\texttt{https://}}
+\texttt{play.\allowbreak{}rust-\allowbreak{}lang.\allowbreak{}org/\allowbreak{}}。强烈推荐用 Rust Playground 来探索本章的语法
+示例。
+\section{声明变量与结构体}
+\label{idx:idx_c2f446fb}
+\label{idx:idx_b6810211}
+虽然程序员可能会把我们的工作与编写代码联系在一起，但程序的大部分行为其实都围绕着声明数据展开。因此，我们先来看如何声明和使用变量与结构体。这些概念对 C++ 程序员来说应该都很熟悉，但我们会了解到那些把 Rust 与 C++ 区分开来的基本语法和行为上的怪癖。
+\subsection{使用简单变量}
+\label{idx:idx_56d5638b}
+在两种语言里，声明一个简单变量都很直接。我们先来看看在 Rust 中是怎么做的：
+\textbf{simple\_\allowbreak{}variable.\allowbreak{}rs}
+\begin{codebox}[rust]
+let some_int : i32 = 0;
+\end{codebox}
+接着看 C++：
+\textbf{simple\_\allowbreak{}variable.\allowbreak{}cpp}
+\begin{codebox}[rust]
+const int some_int = 0;
+\end{codebox}
+即使只是这个简单的例子，我们也能立刻观察到关于 Rust 的几件有趣的事。\texttt{let} 关键字引入了一个名字，我们可以用它来引用一份数据。在 C++ 里，我们或许会称其为变量声明，但在 Rust 里，它常被称为\emph{let 绑定}。这个关键字和术语是 Rust 函数式编程血脉的一小部分。
+我们还能注意到，与 C++ 不同，类型被放在名字之后，用冒号分隔。近年来创建的许多语言都倾向于把类型放在这个位置，因为它能简化语言的文法。这一点也很重要，因为 Rust 是一门有类型推断的语言，意味着在很多情况下类型是可选信息，可以完全省略。
+\label{idx:idx_ccf9e943}
+我们还应该注意到，Rust 中常见的整数类型是\emph{固定宽度}的，也就是说它们把所含的位数编码进了类型本身。对一些程序员来说，这是相对于 C 和 C++ 的一大可喜变化——在 C 和 C++ 中，\texttt{int} 或 \texttt{long} 能表示的位数取决于所用的平台和架构。在近期的标准中，这两种语言引入了 \texttt{stdint.h} 和 \texttt{cstdint} 头文件，提供了诸如 \texttt{int32\_t} 或 \texttt{uint64\_t} 这样的固定宽度类型。虽然这是一项极好的改进，但它需要借助编码规范、代码审查，或许还有静态检查来确保其被使用。与此同时，Rust 的大多数整数类型都把可预测的宽度编码进了名字里。这是一种我们会反复见到的模式。Rust 从它之前的语言中学到了大量经验，并在许多情况下力求让最佳选择成为默认选择。即便从这段最简单的代码对比中，我们也能观察到另一个默认行为得到改进的例子：Rust 默认把变量当作不可变的。这不仅是因为在大多数真实代码中可变性出现得更少，还因为可变性对 Rust 的安全检查策略还有若干额外影响。因此，在 Rust 中，可变性必须被显式地指定。
+\textbf{mutable\_\allowbreak{}variable.\allowbreak{}rs}
+\begin{codebox}[rust]
+let mut some_int : i32 = 0;
+\end{codebox}
+相比之下，在 C++ 中可变性是默认的：
+\textbf{mutable\_\allowbreak{}variable.\allowbreak{}cpp}
+\begin{codebox}[text]
+int some_int = 0;
+\end{codebox}
+由于我们在 \texttt{let} 绑定中使用了 \texttt{mut} 关键字，编译器现在允许我们在后续代码中修改 \texttt{some\_int} 的内容。在这些代码示例中，我们给变量赋了初始值，但 Rust 并不要求变量初始化，即使对不可变变量也是如此。不过，与 C++ 不同，如果变量在初始化之前被读取，它会在编译期报错。在 Rust 中，最常见的做法是初始化所有变量。
+\label{idx:idx_3316c996}
+值得一提的是，像我们一直在考察的这类 \texttt{let} 绑定只用于函数局部变量。Rust 中的全局变量必须用 \texttt{const} 或 \texttt{static} 关键字来代替 \texttt{let}，不能推断或省略类型，而且必须初始化。
+\subsection{学习数组语法}
+\label{idx:idx_da68a373}
+接下来，我们将考察 Rust 用来表示数组的语法：
+\textbf{simple\_\allowbreak{}array.\allowbreak{}rs}
+\begin{codebox}[rust]
+let some_array = [0i32, 1, 2, 3, 4, 5];
+\end{codebox}
+而在 C++ 中：
+\textbf{simple\_\allowbreak{}array.\allowbreak{}cpp}
+\begin{codebox}[rust]
+const int some_array[6] = {0, 1, 2, 3, 4, 5};
+\end{codebox}
+首先我们注意到，在 Rust 中声明数组同样以 \texttt{let} 关键字开头，而且我们的数组默认仍然不可变。这段代码还用到了我们之前没见过的语法：我们把 \texttt{i32} 类型直接附在整数字面量上。Rust 使用这种语法，让程序员在针对整数字面量可选的诸多类型中明确挑选出一个具体类型。多数情况下，这么做是因为类型没有在声明中显式指定。我们本可以对数组中的每个元素都用这种语法，但那样就冗长得没有必要了。
+Rust 还支持一种简洁的语法，可以把整个数组初始化为同一个值：
+\begin{codebox}[rust]
+let some_array = [0i32; 6];
+\end{codebox}
+分号前面的数字是用来初始化每个元素的值，后面的数字则是数组的大小。这种语法在 C++ 中没有直接对应物，不过如果数组要初始化为全零，倒是可以近似地实现出来：
+\begin{codebox}[text]
+int array[6] = {};
+\end{codebox}
+\label{idx:idx_5aa3234e}
+在我们的 Rust 示例中，这个数组的类型是 \texttt{[i32; 6]}。与 C++ 一样，数组的长度也是类型的一部分。与 C++ 不同，Rust 中的数组没有退化为指针类型的概念。Rust 转而引入了\emph{切片}（slice）的概念，它是一对「指针 + 长度」，很像 C++ 里的 \texttt{std::span}。我们将在后面的章节中深入考察切片。
+\subsection{使用结构体}
+\label{idx:idx_a53f2ef5}
+Rust 没有 \texttt{class} 关键字。它改用结构体把数据组合在一起，乍看之下与 C++ 非常相似。我们设想用一个表示三维向量的结构体作为示例：
+\textbf{simple\_\allowbreak{}structure.\allowbreak{}rs}
+\begin{codebox}[rust]
+struct Vector3 {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+\end{codebox}
+\textbf{simple\_\allowbreak{}structure.\allowbreak{}cpp}
+\begin{codebox}[rust]
+struct Vector3 {
+    float x;
+    float y;
+    float z;
+};
+\end{codebox}
+这里两种语言之间的差异还算小。Rust 仍然选择把类型放在成员名之后。这里我们用 \texttt{f32} 类型来指定单精度 32 位浮点数，在大多数架构上等同于 C++ 的 \texttt{float}。此外我们注意到，Rust 在定义结构体时不使用结尾的分号。
+当我们声明结构体的一个实例时，两种语言之间的差异就开始显现出来：
+\textbf{structure\_\allowbreak{}declaration.\allowbreak{}rs}
+\begin{codebox}[rust]
+let some_vector = Vector3 {
+    x: 0.0,
+    y: 0.0,
+    z: 0.0,
+};
+\end{codebox}
+\textbf{structure\_\allowbreak{}declaration.\allowbreak{}cpp}
+\begin{codebox}[rust]
+const Vector3 some_vector = { 0.0, 0.0, 0.0 };
+\end{codebox}
+\label{idx:idx_aa0f9156}
+这里我们看到一个有趣的例外，它打破了我们目前遇到的 Rust 语法规则。此前，冒号总是意味着后面跟着一个类型，但这里并非如此。在声明结构体时，冒号用来分隔成员名和它的值。顺带说一句，如果你好奇的话——Rust 确实要求我们按名称为结构体中的每一个成员都指定一个值。
+也许是意识到这样写会很笨拙，Rust 的开发者们提供了两种结构体声明语法的变体，以提高代码的清晰度并减少所需的输入量。第一，如果作用域中存在一个与结构体成员同名的变量，我们就可以省略值的部分。这样，下面两种声明就是完全等价的：
+\begin{codebox}[rust]
+let x = 0.0;
+let y = 0.0;
+let z = 0.0;
+let vector1 = Vector3 { x: x, y: y, z: z };
+let vector2 = Vector3 { x, y, z };
+\end{codebox}
+第二，如果作用域中已有一个同类型的结构体，我们就可以用它的值来初始化一个新结构体。沿用上一个示例，我们可以写一些利用这一点的代码：
+\begin{codebox}[rust]
+let vector3 = Vector3 { x: 1.0, ..vector1 };
+\end{codebox}
+这种语法表示我们希望只初始化 \texttt{x} 成员，其余的值则从 \texttt{vector1} 复制。
+\label{idx:idx_c7a3d128}
+虽然这些语法技巧在某些情况下有所帮助，但声明大型结构体仍然可能很笨拙。在典型的 Rust 代码中，我们发现这种声明结构体的语法用得并不多。相反，社区已经约定了一系列惯例，让结构体用起来方便得多。但要理解这些惯例，我们得先学习 Rust 声明和调用函数的语法。
+\section{使用函数与方法}
+\label{idx:idx_60920161}
+\label{idx:idx_d56be3b9}
+尽管数据很重要，但 C++ 和 Rust 程序都需要函数才能完成任何有用的事。接下来我们来看看 Rust 如何处理函数与方法的语法。从概念上说，两种语言的行为非常相似，但 Rust 的函数式语言根源，使得函数的常见实现方式出现了一个有趣的转折，我们下面就来探讨。
+\subsection{函数与块表达式}
+\label{idx:idx_ac1c3954}
+\label{idx:idx_d8622c6a}
+用上一节中我们的 \texttt{Vector3} 结构体，下面分别用 Rust 和 C++ 写一个把两个向量相加的函数：
+\textbf{add\_\allowbreak{}vectors.\allowbreak{}rs}
+\begin{codebox}[rust]
+fn add_vectors(left: Vector3, right: Vector3) -> Vector3 {
+    Vector3 {
+        x: left.x + right.x,
+        y: left.y + right.y,
+        z: left.z + right.z,
+    }
+}
+\end{codebox}
+\textbf{add\_\allowbreak{}vectors.\allowbreak{}cpp}
+\begin{codebox}[text]
+Vector3 add_vectors(Vector3 left, Vector3 right) {
+    return {
+        left.x + right.x,
+        left.y + right.y,
+        left.z + right.z
+    };
+}
+\end{codebox}
+\label{idx:idx_dc4e5022}
+从这个示例可以看出，Rust 函数以 \texttt{fn} 关键字开头，其返回类型跟在函数头部右侧的 \texttt{->} 运算符之后。抛开些许线性代数不谈，函数体应该已经能看懂了，因为它只是用 Rust 的结构体声明语法声明了一个新的 \texttt{Vector3}。但 Rust 版本里少了一样东西，可能会让人困惑：\texttt{return} 关键字在哪里？
+\label{idx:idx_b1bfa0a0}
+这里实际展示的是 Rust 另一个源自函数式编程的概念。与 C++ 一样，Rust 中的\emph{块}（block）由花括号包起，其中包含一条或多条\emph{语句}，每条语句以分号结尾。不过，Rust 中的每个块还可以以一个可选的\emph{表达式}结尾，该表达式不以分号结尾。当这个表达式存在时，块本身的类型和值就被视为该最终表达式的类型和值。如果块没有最终表达式，它的类型就是 \texttt{()}，类似于 C++ 中的 \texttt{void} 类型。
+这意味着块的值可以赋给变量，或者像这里这样，充当函数的返回值。Rust 中这样使用的块，术语叫作\emph{块表达式}（block expression）。块表达式是 Rust 代码中一个重要且常用的概念。它在 C++ 中没有直接对应物，但有两个稍显相似的概念：所谓的\emph{立即调用函数表达式}（Immediately Invoked Function Expression，超出本书范围），以及 C++ 的条件运算符，有时也被称为三元运算符：
+\textbf{ternary\_\allowbreak{}operator.\allowbreak{}rs}
+\begin{codebox}[rust]
+fn absolute_value(x: i32) -> i32 {
+    if x < 0 { -x } else { x }
+}
+\end{codebox}
+\textbf{ternary\_\allowbreak{}operator.\allowbreak{}cpp}
+\begin{codebox}[text]
+int absolute_value(int x) {
+    return (x < 0) ? -x : x;
+}
+\end{codebox}
+\label{idx:idx_d7c7d45a}
+\label{idx:idx_d95a7a94}
+虽然我们还没看过控制流，但这里 Rust 版本的 \texttt{if} 表达式应该足够熟悉，能够看懂。这个函数两次用到了块表达式。首先，\texttt{if} 表达式的值就是所走分支中最后一个表达式的值。然后，由于 \texttt{if} 表达式是函数中的最后一个表达式，整个函数就取该表达式的值。\texttt{return} 关键字在 Rust 中确实存在，也可以在这个函数里使用，但 Rust 代码为了简洁，更常见的是省略它。
+\subsection{用方法为结构体添加行为}
+\label{idx:idx_77c6c80a}
+与许多其他语言一样，Rust 区分\emph{方法}和其他类型的函数。方法是对某一特定类型的实例或\emph{对象}进行操作的函数。
+\label{idx:idx_bc19f485}
+我们上面创建的 \texttt{add\_\allowbreak{}vectors} 函数接收两个 \texttt{Vector3} 结构体，并返回一个新的
+\texttt{Vector3}，其中包含它们的和。然而，这样的函数也可以很好地充当
+方法。作为方法，我们会希望它把当前对象当作两个参数之一，另一个参数则从外部传入。下面来看看在 Rust 和 C++ 中实现这一点的几种不同方式：
+\textbf{vector\_\allowbreak{}method.\allowbreak{}rs}
+\begin{codebox}[rust]
+impl Vector3 {
+    fn add(&self, other: Vector3) -> Vector3 {
+        Vector3 {
+            x: self.x + other.x,
+            y: self.y + other.y,
+            z: self.z + other.z,
+        }
+    }
+}
+\end{codebox}
+\textbf{vector\_\allowbreak{}method.\allowbreak{}cpp}
+\begin{codebox}[rust]
+Vector3 Vector3::add(Vector3 other) const {
+    return {
+        this->x + other.x,
+        this->y + other.y,
+        this->z + other.z,
+    };
+}
+\end{codebox}
+\label{idx:idx_05655144}
+关于这个示例，我们首先注意到，Rust 严格地把定义结构体所含数据的代码，与定义为该结构体实现的函数的代码分开。Rust 中所有方法都必须放在 \texttt{impl} 块内。这在 C++ 程序员看来可能不太寻常，但它让结构体和实现都保持整洁，而且正如我们稍后会看到的，这还与 Rust 的泛型编程策略相契合。我们看到的第二处新语法是 \texttt{\&self} 参数。与 C++ 中的 \texttt{this} 指针很像，\texttt{self} 关键字表示调用该方法的那个对象。同样与 C++ 相似，\texttt{\&} 运算符把类型变成引用，只不过在 Rust 中它用作类型的前缀，而在 C++ 中是后缀。到这时我们大概已经能料到，在 Rust 中，引用默认是不可变的，除非显式声明为可变。
+作为一个使用可变 \texttt{self} 引用的例子，我们可以把这个方法改成一步完成向量加法与赋值，很像 Rust 和 C++ 中的 \texttt{+=} 运算符：
+\textbf{mutable\_\allowbreak{}self\_\allowbreak{}method.\allowbreak{}rs}
+\begin{codebox}[rust]
+ impl Vector3 {
+    fn add_assign(&mut self, other: Vector3) {
+        self.x += other.x;
+        self.y += other.y;
+        self.z += other.z;
+    }
+}
+\end{codebox}
+\label{idx:idx_f060f199}
+调用这个函数之后，结构体的内容会被更新为对象中的数据与 \texttt{other} 向量之和。由于该函数要求 \texttt{self} 可变，若试图在一个未声明为可变的对象上调用它，将会失败。
+Rust 把所有与某个结构体关联的函数都称为\emph{关联函数}，但只有带 \texttt{self} 参数的关联函数才称为方法。省略 \texttt{self} 参数后，我们创建的关联函数在行为上类似于 C++ 所说的静态成员函数。
+关于这一点，有一个前面提到过的特殊惯例，被许多 Rust 程序所采用。Rust 代码中的许多结构体都会提供一个不带 \texttt{self} 参数的 \texttt{new} 函数，作为初始化结构体的便捷手段。这个函数类似 C++ 中的构造函数，但在 Rust 中，\texttt{new} 函数没有任何特殊行为。提供这样的函数完全是出于惯例。
+下面来看一个我们 \texttt{Vector3} 结构体的示例：
+\begin{codebox}[rust]
+impl Vector3 {
+    fn new() -> Vector3 {
+        Vector3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        }
+    }
+}
+\end{codebox}
+\label{idx:idx_c6ca16b4}
+\label{idx:idx_1decdcb0}
+Rust 的设计者选择既不实现 C++ 的默认参数特性，也不实现函数重载特性，因此可能需要为每个结构体提供多个类似构造函数的函数。围绕 \texttt{new} 以及其他类似构造函数的函数，标准库和大多数 Rust 社区所遵循的惯例，由 Rust API 指南（Rust API guidelines）阐述，见 \href{https://rust-lang.github.io/api-guidelines/}{\texttt{https:/\allowbreak{}/\allowbreak{}rust-\allowbreak{}lang.\allowbreak{}github.\allowbreak{}io/\allowbreak{}api-\allowbreak{}guidelines/\allowbreak{}}}。
+\subsection{调用函数与方法}
+\label{idx:idx_85c633ef}
+\label{idx:idx_1f76d7ed}
+关于函数，我们最后需要考察的一个方面是如何调用它们。继续使用我们的
+\texttt{Vector3} 结构体，我们会发现在调用函数和方法时，Rust 与 C++
+代码之间存在着许多语法上的相似之处：
+\textbf{function\_\allowbreak{}call.\allowbreak{}rs}
+\begin{codebox}[rust]
+let left = Vector3::new();
+let right = Vector3::new();
+let sum = add_vectors(left, right);
+\end{codebox}
+\textbf{function\_\allowbreak{}call.\allowbreak{}cpp}
+\begin{codebox}[rust]
+const Vector3 left = { 0.0, 0.0, 0.0 };
+const Vector3 right = { 0.0, 0.0, 0.0 };
+const Vector3 sum = add_vectors(left, right);
+\end{codebox}
+在 Rust 中调用函数的语法与 C++ 几乎完全相同。这里我们也是第一次看到对 \texttt{new} 函数的调用。在 Rust 中调用关联函数使用 \texttt{::} 运算符，把函数名与结构体名连接起来。
+\label{idx:idx_e7108865}
+\label{idx:idx_80039eab}
+接下来，我们来考察对我们前面所做的向量加法函数的不可变版与可变版方法的调用。这里大概同样不会有什么语法上的意外。首先来看不可变的调用：
+\textbf{method\_\allowbreak{}call.\allowbreak{}rs}
+\begin{codebox}[rust]
+let left = Vector3::new();
+let right = Vector3::new();
+let sum = left.add(right);
+\end{codebox}
+\textbf{method\_\allowbreak{}call.\allowbreak{}cpp}
+\begin{codebox}[rust]
+const Vector3 left = { 0.0, 0.0, 0.0 };
+const Vector3 right = { 0.0, 0.0, 0.0 };
+const Vector3 sum = left.add(right);
+\end{codebox}
+现在来看带可变性的写法：
+\textbf{mutable\_\allowbreak{}method\_\allowbreak{}call.\allowbreak{}rs}
+\begin{codebox}[rust]
+let mut left = Vector3::new();
+let right = Vector3::new();
+left.add_assign(right);
+\end{codebox}
+\textbf{mutable\_\allowbreak{}method\_\allowbreak{}call.\allowbreak{}cpp}
+\begin{codebox}[rust]
+Vector3 left = { 0.0, 0.0, 0.0 };
+const Vector3 right = { 0.0, 0.0, 0.0 };
+left.add_assign(right);
+\end{codebox}
+如我们所见，两种语言中调用函数的语法非常相似。不过在谈到方法调用时，我们应该注意，Rust 始终使用 \texttt{.} 运算符来访问成员。与 C++ 不同，Rust 中没有 \texttt{->} 运算符。
+\label{idx:idx_5decb213}
+\label{idx:idx_c46cfe2b}
+现在，定义和调用函数的能力已经加入我们的 Rust 工具箱，可以开始学习 Rust 的控制流结构了。
+\section{在程序中控制流向}
+\label{idx:idx_3694a8d9}
+在程序中，我们常常希望根据程序的状态，在代码中走不同的路径。条件执行与循环合起来称作\emph{控制流}（control flow），除最简单的程序外，理解任何程序都离不开它。
+\subsection{使用条件判断}
+\label{idx:idx_cbdbb6a9}
+最直接的控制流形式就是简单的 \texttt{if} 语句，我们会发现在 Rust 中它与 C++ 有许多相似之处。设想我们正在计算一个平均值，并希望防止除以零的操作：
+\textbf{simple\_\allowbreak{}if\_\allowbreak{}statement.\allowbreak{}rs}
+\begin{codebox}[rust]
+let mut avg = 0;
+if count != 0 {
+    avg = sum / count;
+}
+\end{codebox}
+\textbf{simple\_\allowbreak{}if\_\allowbreak{}statement.\allowbreak{}cpp}
+\begin{codebox}[text]
+int avg = 0;
+if (count != 0) {
+    avg = sum / count;
+}
+\end{codebox}
+在 Rust 中我们看到，\texttt{if} 语句在语法上不要求加括号，而且我们会发现，所有其他控制流语句也是如此。这省下了一点输入量，而且庆幸的是，它还预先消除了一大堆关于每种语句究竟该如何组合空白与括号的争论。在 Rust 中，括号仍然用于对表达式分组和强制优先级，与 C++ 一样。
+不过在 Rust 中，像这样使用可变初始化并不常见。更常见的是把前面的代码改写成用一个不可变变量接收块表达式来初始化：
+\begin{codebox}[rust]
+let avg = if count == 0 { 0 } else { sum / count };
+\end{codebox}
+\label{idx:idx_faa429fa}
+那 \texttt{else if} 呢？同样，它与 C++ 几乎一样，但我们也应当注意，在 Rust 中即使是单行的 \texttt{if} 和 \texttt{else if} 块，花括号也是必需的：
+\textbf{else\_\allowbreak{}if\_\allowbreak{}chain.\allowbreak{}rs}
+\begin{codebox}[text]
+if i % 3 == 0 && i % 5 == 0 {
+    println!("fizzbuzz");
+} else if i % 3 == 0 {
+    println!("fizz");
+} else if i % 5 == 0 {
+    println!("buzz");
+}
+\end{codebox}
+\textbf{else\_\allowbreak{}if\_\allowbreak{}chain.\allowbreak{}cpp}
+\begin{codebox}[rust]
+if (i % 3 == 0 && i % 5 == 0)
+    std::cout << "fizzbuzz" << std::endl;
+else if (i % 3 == 0)
+    std::cout << "fizz" << std::endl;
+else if (i % 5 == 0)
+    std::cout << "buzz" << std::endl;
+\end{codebox}
+最后要指出的一点是，Rust 中的简单条件判断和复合条件判断往往与 C++ 中的完全相同，\texttt{\&\&}、\texttt{||}、\texttt{!=} 和 \texttt{==} 运算符的用法与 C++ 完全一致。
+\subsection{使用循环与 break}
+\label{idx:idx_4c4b7ee7}
+在 Rust 中，最简单的循环方式是使用 \texttt{loop} 关键字创建一个永不结束的循环：
+\textbf{infinite\_\allowbreak{}loop.\allowbreak{}rs}
+\begin{codebox}[text]
+loop {
+    println!("waiting...");
+}
+\end{codebox}
+\textbf{infinite\_\allowbreak{}loop.\allowbreak{}cpp}
+\begin{codebox}[rust]
+while (true) {
+    std::cout << "waiting" << std::endl;
+}
+\end{codebox}
+一个永不结束的循环本身用处不大。通常，我们退出循环用的是
+\label{idx:idx_7ab2df65}
+\texttt{break} 关键字——只要在两种语言中某个条件得到满足。
+另一种编写「条件满足后即退出」的循环的方式，是使用 \texttt{while} 关键字。
+\textbf{while\_\allowbreak{}loop.\allowbreak{}rs}
+\begin{codebox}[rust]
+let mut i = 0;
+while i < 10 {
+    i += 1;
+}
+\end{codebox}
+\textbf{while\_\allowbreak{}loop.\allowbreak{}cpp}
+\begin{codebox}[text]
+int i = 0;
+while (i < 10) {
+    i += 1;
+}
+\end{codebox}
+\label{idx:idx_59fd020e}
+正如我们在其他关键字上看到的那样，这里两种语言唯一的差别是 Rust 不把括号作为循环语法的一部分。在之前的例子中，我们只是对特定数量的整数进行循环，这非常适合用 \texttt{for} 循环来做。在这里，我们终于开始看到两种语言之间一些真正有意义的差异：
+\textbf{for\_\allowbreak{}loop.\allowbreak{}rs}
+\begin{codebox}[text]
+for i in 0..10 {
+    println!("{}", i);
+}
+\end{codebox}
+\textbf{for\_\allowbreak{}loop.\allowbreak{}cpp}
+\begin{codebox}[rust]
+for (int i = 0; i < 10; i++) {
+    std::cout << i << std::endl;
+}
+\end{codebox}
+\label{idx:idx_d25c919d}
+Rust 总是把 \texttt{for} 关键字与相应的 \texttt{in} 关键字配对使用，这使它更接近 C++ 的\emph{基于范围的 for 循环}，而不是传统的 C 风格 \texttt{for} 循环。在 Rust 中，循环会遍历 \texttt{in} 关键字后面那个东西的元素。它可以是一个数组、一个容器，或者像本例中这样，是一个整数\emph{范围}（range）。
+Rust 中的范围有一等公民级别的语法：要么用 \texttt{start..end} 定义不含末尾数字的\emph{排他范围}，要么用 \texttt{start..=end} 定义包含末尾数字的\emph{包含范围}。
+我们要考察的最后一个循环话题是嵌套循环。有时在嵌套循环中，我们希望用 \texttt{continue} 或 \texttt{break} 影响外层循环，而不是它们默认影响的内层循环——这是它们在 Rust 和 C++ 中的默认行为。在 C++ 中，我们的选择通常是使用 Rust 所没有的 \texttt{goto}，或者重构代码以添加额外的检查。Rust 的解决方案是允许
+\texttt{continue} 和 \texttt{break} 关键字接受一个可选的\emph{标签}（label），用来指明要影响哪个循环。
+\textbf{break\_\allowbreak{}to\_\allowbreak{}outer\_\allowbreak{}loop.\allowbreak{}rs}
+\begin{codebox}[text]
+'outer: for y in 0..200 {
+    for x in 0..320 {
+        if finished() {
+            break 'outer;
+        }
+    }
+}
+\end{codebox}
+\textbf{break\_\allowbreak{}to\_\allowbreak{}outer\_\allowbreak{}loop.\allowbreak{}cpp}
+\begin{codebox}[text]
+outer:
+for (int y = 0; y < 200; y++) {
+    for (int x = 0; x < 320; x++) {
+        if (finished()) {
+            goto outer;
+        }
+    }
+}
+\end{codebox}
+\label{idx:idx_4a5b9f72}
+Rust 对这些标签的用法相当严格。首先，标签名必须以单引号字符开头。它们也只能用来指代包围它们的循环，而且只能由 \texttt{break} 和 \texttt{continue} 关键字使用。这个特性并不能取代 \texttt{goto} 关键字，但它确实实现了它在 C 和 C++ 中最常见的用途之一。
+\section{理解泛型编程}
+\label{idx:idx_c60ec0c8}
+\label{idx:idx_e98fddfb}
+泛型编程是指编写单个函数或结构体，使其能适用多组类型。C++ 用\emph{模板}（template）以及\textbf{标准模板库}或\textbf{STL}来实现泛型行为。尽管存在一些语法上的相似之处，Rust 的泛型编程方法与 C++ 大不相同。这可能使提供对等的 C++ 代码示例变得困难，但只要实际可行，我们仍会用它们来说明概念。
+\subsection{使用泛型结构体}
+\label{idx:idx_20d20764}
+\label{idx:idx_b6eaae6b}
+开始学习泛型，最容易的切入点是结构体。我们把一直在用的 \texttt{Vector3} 类型扩展一下，让它可以使用不同的基础类型。
+\textbf{generic\_\allowbreak{}vector3.\allowbreak{}rs}
+\begin{codebox}[rust]
+struct GenericVector3<T> {
+    x: T,
+    y: T,
+    z: T,
+}
+\end{codebox}
+\textbf{generic\_\allowbreak{}vector3.\allowbreak{}cpp}
+\begin{codebox}[rust]
+template <typename T>
+struct GenericVector3 {
+    T x;
+    T y;
+    T z;
+};
+\end{codebox}
+Rust 的语法略微紧凑一些，但与 C++ 的语法相差不多。
+如果我们想在泛型 Rust 结构体上指定一个方法，就必须使用泛型 \texttt{impl} 块：
+\begin{codebox}[rust]
+impl<T> GenericVector3<T> {
+    fn new() -> GenericVector3<T> {
+        todo!()
+    }
+}
+\end{codebox}
+你可能已经注意到，泛型参数 \texttt{T} 被列出了两次。对许多初学者来说，这是 Rust 一个令人困惑的怪癖。紧跟在 \texttt{impl} 关键字之后的泛型参数，使该泛型类型在整个 \texttt{impl} 块的其余部分都可用。随后在结构体名之后也要紧跟这些泛型参数，因为我们要为其实现的结构体是泛型的。
+这里我们还用到了标准的 \texttt{todo!()} 宏，用来表示代码稍后会补齐。如果执行到这段代码，程序会带着一条错误信息退出，表明该函数尚未实现。要能为这个函数提供有意义的实现，我们还缺少一小块拼图，所以现在先记下这个语法。
+\label{idx:idx_8d23cbf8}
+\label{idx:idx_95948366}
+\label{idx:idx_73a8ae45}
+\label{idx:idx_ba2a0e00}
+除了类型之外，Rust 还提供了一个叫作\emph{const 泛型}（const generics）的特性，允许我们把整数类型用作泛型参数。它们很像 C++ 中的\emph{非类型模板参数}。一个示例用法是创建一个可以支持任意大小的向量类型。
+\textbf{const\_\allowbreak{}generic.\allowbreak{}rs}
+\begin{codebox}[rust]
+struct ArbitrarySizeVector<const N: usize> {
+    values: [f32; N]
+}
+\end{codebox}
+\textbf{const\_\allowbreak{}generic.\allowbreak{}cpp}
+\begin{codebox}[rust]
+template <size_t N>
+struct ArbitrarySizeVector {
+    float values[N];
+};
+\end{codebox}
+我们还没见过 \texttt{usize}，它是 Rust 中少数大小依赖于架构的整数类型之一。在这里，它是寻址任意内存位置所需的字节数：32 位架构上为 4 字节，64 位架构上为 8 字节。
+要声明一个指定大小的新对象，你必须使用整个 Rust 中语法最糟糕、名字也最糟糕的运算符：\emph{涡轮鱼}（turbofish）运算符，\texttt{::< >}。
+\begin{codebox}[rust]
+let vec = ArbitrarySizeVector::<3>::new();
+\end{codebox}
+\label{idx:idx_10e734f2}
+\label{idx:idx_aedb192f}
+只要编译器没有足够的信息来确定我们所需的泛型类型或值，就必须使用这个运算符。
+\subsection{用 trait 指定泛型行为}
+\label{idx:idx_3b2725d0}
+\label{idx:idx_e14fc5e7}
+\label{idx:idx_37250bf3}
+泛型数据结构是很好的工具，但要编写泛型代码，我们需要理解 Rust 所称的\emph{trait}。在其他一些语言中，trait 也许被称为接口（interface）。trait 定义指定了一组函数，任何实现该 trait 的结构体都必须实现这组函数。下面来看 Rust 标准 \texttt{Add} trait 的一个简化版本：
+\begin{codebox}[rust]
+trait Add {
+    fn add(self, rhs: Self) -> Self;
+}
+\end{codebox}
+在这段代码中，\texttt{Self} 是一个特殊关键字，表示 \texttt{self} 参数的类型，否则这个类型无从得知，因为该 trait 可能会为若干不同的结构体实现。有了这个 trait 定义，我们就可以为自定义的
+\texttt{Vector3} 类型提供一个实现：
+\begin{codebox}[rust]
+impl Add for Vector3 {
+    fn add(self, rhs: Self) -> Self {
+        Vector3 {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+            z: self.z + rhs.z,
+        }
+    }
+}
+\end{codebox}
+注意，我们用的是之前实现关联函数时见过的同一个 \texttt{impl} 关键字，但这次我们是在专门为我们的结构体实现一个 trait，也就是接口。把该 trait 引入代码后，我们就能像使用普通方法那样，用 \texttt{x.add(y)} 语法来使用 \texttt{add} 函数。
+\label{idx:idx_f7f00398}
+你也许想知道，把行为实现为 trait 有什么好处。毕竟，我们本可以直接把之前实现的 \texttt{add} 函数作为结构体的一部分来使用，而不用这个泛型 trait。事实证明，在实现泛型函数时，trait 正是我们一直在寻找的那块缺失的拼图。
+\label{idx:idx_8b04c2e8}
+如果你熟悉 C++ 的模板解析，你可能知道模板只有在展开或\emph{实例化}之后才能进行类型检查。这种设计选择有时会导致编译器给出令人困惑的错误信息。Rust 做出了相反的选择，它要求程序员提供足够的信息，让 Rust 编译器在展开或\emph{特化}之前就能对所有泛型代码进行类型检查。
+Rust 做到这一点的方式是：只要用到泛型类型，就要求程序员指定\emph{trait 约束}。利用前面那个简化的 \texttt{Add} trait，我们可以实现一个自由函数 \texttt{add}，它接受任何实现了我们 trait 的结构体：
+\begin{codebox}[rust]
+fn add<T>(left: T, right: T) -> T
+where
+    T: Add,
+{
+    left.add(right)
+}
+\end{codebox}
+这段代码使用 \texttt{where} 子句来为该函数指定 trait 约束。这就\emph{限定}了可以传给该函数的可能结构体集合，只限于那些实现了
+\texttt{Add} trait 的结构体。因为编译器知道，每一个传给该函数的结构体都会
+实现 \texttt{Add} trait，所以它知道，在这个函数中对任何类型为 \texttt{T} 的值调用 \texttt{add} 成员函数都是合法的。通过要求 trait 约束，编译器就能在还不知道具体会用到哪些类型的情况下，对该函数做完整的类型检查。
+回到 \texttt{GenericVector3<\allowbreak{}T>\allowbreak{}}，我们现在就能理解，要让泛型函数做任何有意义的事，都需要使用 trait 约束：
+\begin{codebox}[rust]
+impl<T: Default> GenericVector3<T> {
+    fn new() -> GenericVector3<T> {
+        GenericVector3 {
+            x: T::default(),
+            y: T::default(),
+            z: T::default(),
+        }
+    }
+}
+\end{codebox}
+\label{idx:idx_88c21155}
+\label{idx:idx_8b2f0846}
+这里我们指定了标准库的 \texttt{Default} trait 约束，它提供了 \texttt{default()} 函数供我们在泛型函数内部使用。这一次，trait 约束没有写在
+\texttt{where} 子句里。我是故意这么做的，因为 Rust 语法常常允许要么使用 \texttt{where} 子句，要么使用
+这里所用的 \texttt{T: Default} 语法。阅读代码时，Rust 代码库中这两种语法都可能见到。
+这里只是对 trait 与 trait 约束的一个小概览。在阅读本书的过程中，我们还会遇到它们，并看到更多用法示例。其中有些概念是从 C++ 迁移过来的，但如果此刻你还没完全弄懂 trait，也不必担心。眼下我们最关心的，是熟悉 Rust 为 trait 和泛型编程所采用的语法约定。
+\section{学习模式匹配}
+\label{idx:idx_0cd1d764}
+\label{idx:idx_eebf7284}
+模式匹配最能体现 Rust 的函数式编程渊源，也是这门语言中最能让我们打造出用起来令人愉悦的 API 的特性之一。几乎每个稍具规模的 Rust 程序都会用到模式匹配，想要读懂并理解 Rust，掌握它是必不可少的。
+\subsection{在 Rust 中使用更强大的枚举}
+\label{idx:idx_a1c04fed}
+\label{idx:idx_44699645}
+\label{idx:idx_d0a2d652}
+有些读者可能会奇怪，为什么我们在讨论结构体语法时没有一并讨论枚举。原因在于，Rust 中的枚举（下文写作 \emph{enum}）比 C++ 中的枚举强大得多。
+在最简单的形式上，Rust 枚举可以轻松复制 C++ 的能力：
+\textbf{simple\_\allowbreak{}enum.\allowbreak{}rs}
+\begin{codebox}[rust]
+enum Numbers {
+    Zero,
+    One,
+    Two,
+}
+\end{codebox}
+\textbf{simple\_\allowbreak{}enum.\allowbreak{}cpp}
+\begin{codebox}[rust]
+enum class Number {
+    Zero,
+    One,
+    Two
+};
+\end{codebox}
+这两个声明及其语义几乎完全相同。我在 C++ 示例中使用了 \texttt{enum class}，因为它与 Rust 的用法最为接近。换句话说，在两种语言中，我们通常都必须用 \texttt{Number::\allowbreak{}Zero} 或 \texttt{Number::One} 来使用某个具体的值。Rust 可以把值的名字直接导入作用域来绕开这一点，类似于 C++ 中的 \texttt{using namespace} 声明，不过这通常只针对一些常见的标准类型才会发生。
+\label{idx:idx_be4c963c}
+下面来看一个更复杂的 Rust 示例：
+\begin{codebox}[rust]
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+\end{codebox}
+\label{idx:idx_260c7f1c}
+\label{idx:idx_e5a120a7}
+这里的 \texttt{Result} 类型实际上直接来自标准库。可以看到，它是一个带两个泛型类型的枚举，但如果我们的直觉来自 C++，这可能就不太好理解了。为什么我们要把泛型类型放在每个值的旁边呢？
+Rust 中的枚举实现了一种非常强大的抽象，叫做\emph{标签联合}（tagged union）。在 C++ 中，可以用一个枚举加一个联合体来实现它，但近些年来它由
+\texttt{std::\allowbreak{}variant} 类型来表示。其基本思想是：任何类型为 \texttt{enum} 的变量都可以持有其中任意
+一个值，以及该值所关联的数据。但在同一时刻，它只能表示其中一种可能的值。
+回到 \texttt{Result}，它用于在 Rust 中实现错误处理。后面的章节里我们还会看到更多相关示例，不过现在我们先稍微把玩一下这个类型，只是考察一下 Rust 枚举的语法和用法：
+\begin{codebox}[rust]
+impl Vector3 {
+    fn divide(&self, value: f32)
+        -> Result<Vector3, String> {
+        if value == 0.0 {
+            return Err("divide by zero!".to_string());
+        }
+        Ok(Vector3 {
+            x: self.x / value,
+            y: self.y / value,
+            z: self.z / value,
+        })
+    }
+}
+\end{codebox}
+\label{idx:idx_65c607f3}
+\label{idx:idx_de227c0b}
+\label{idx:idx_290e884e}
+这个函数既可以返回由 \texttt{Err} 值表示的错误，也可以返回由 \texttt{Ok} 值表示的常规返回值。但调用方如何判断它究竟处于这两种状态中的哪一种呢？这就引出了\emph{模式匹配}。
+\subsection{匹配模式}
+\label{idx:idx_23efaf34}
+\label{idx:idx_bb44277f}
+在 C++ 的用语里，模式匹配也许会被称作\emph{解构}（destructuring），但它在历史上的 C++ 代码里并不常见。它本质上是一个过程：拿一个可能包含不止一种状态的类型，然后根据它实际存储的值来做决策。Rust 中的模式匹配从 \texttt{match} 语句开始，它是 C++ \texttt{switch} 语句的加强版：
+\begin{codebox}[rust]
+let result = match vec.divide(divisor) {
+    Ok(val) => val,
+    Err(err) => {
+        eprintln!("Error: {}", err);
+        Vector3::new()
+    }
+};
+\end{codebox}
+\label{idx:idx_7b993c66}
+\texttt{match} 语句接收一个表达式，并为每一种可能的值仔细指定相应的行为。在这段代码中可以看到，如果 \texttt{divide} 通过 \texttt{Ok} 状态返回了正确的值，我们就直接把该值从 \texttt{Result} 类型中取出并赋给一个变量。但是，如果 \texttt{divide} 返回了错误，我们就改为把错误信息打印到 \texttt{stderr}，然后提供一个合理的回退值供程序其余部分使用。
+\label{idx:idx_18c2d82b}
+\label{idx:idx_ea618216}
+\texttt{match} 语句必须是穷尽的，也就是说，所传入表达式的每一种可能取值都必须以某种方式处理。好在我们可以用 \texttt{\_} 模式来提供类似 C++ \texttt{switch} 语句中 \texttt{default} 回退分支的东西；但总的来说，穷尽匹配是一项重要特性，它能消除代码变动时 bug 悄悄混入的可能。对于程序员只关心枚举某一种状态的常见情形，Rust 提供了一种语法糖。它叫做 \texttt{if let} 运算符，用前面那个 \texttt{Result} 类型及其等价的 \texttt{match} 语句来演示最为容易。
+\textbf{if\_\allowbreak{}let\_\allowbreak{}statement.\allowbreak{}rs}
+\begin{codebox}[rust]
+if let Ok(val) = vec.divide(0.0) {
+    println!("got val {}", val);
+}
+match vec.divide(0.0) {
+    Ok(val) => println!("got val {}", val),
+    _ => {}
+}
+\end{codebox}
+\texttt{if let} 语句一开始可能会让人困惑，但它在 Rust 代码中用得很多。和普通的 \texttt{if} 语句一样，它也可以带 \texttt{else} 子句。
+\section{小结}
+在本章中，我们通过与 C++ 的直接对比，学习了如何在 Rust 中声明和使用变量、结构体和函数。接着，我们简要考察了 Rust 中泛型编程与模式匹配的核心概念。有了这些基础知识，我们应该能够读懂遇到的许多 Rust 程序。
+在下一章中，我们将看看 Rust 究竟是如何实现其强大的安全保证的，以及这对我们程序员有何影响。
+\needspace{26\baselineskip}
+\begin{samepage}
+\subsection{获取本书的 PDF 版本及更多内容}
+扫描二维码（或访问 \texttt{packtpub.\allowbreak{}com/\allowbreak{}unlock}）。按书名搜索本书，确认版本，然后按照页面上的步骤操作。
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\emph{注意：请把发票放在手边。直接从 Packt 购买的订单无需发票。}
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\end{samepage}

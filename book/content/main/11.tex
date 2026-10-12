@@ -1,0 +1,449 @@
+虽然 Rust 的静态安全保证在仅使用一个线程的程序中表现得极其出色，但让代码跨多个线程并发运行，会让编程的几乎每个方面都变得复杂。正如我们将看到的，Rust 在多线程环境中仍然能够提供一些编译期安全保证。这是极少有其他语言敢于做出的承诺，也正是它让 Rust 的创造者把 Rust 描述为一门“无惧并发（fearless concurrency）”的语言。
+在本章中，我们将考察用 Rust 编写多线程代码的几个方面，包括 Rust 在并发环境中的安全保证，以及使用线程的常用技巧。
+在本章中，我们将涵盖以下主要主题：
+\begin{itemize}
+  \item 创建和管理线程
+  \item 在 Rust 中安全地使用多线程
+  \item 跨线程同步数据
+  \item 实用的多线程技巧
+\end{itemize}
+\section{技术要求}
+本章的示例使用 Rust 1.\allowbreak{}82.\allowbreak{}0，但它们也能在任何更新的版本上工作。
+如果你在安装 Rust 方面需要帮助，请参阅\emph{附录}。
+你可以在本书的 GitHub 仓库中找到本章的代码文件：\href{https://}{\texttt{https://}}
+\texttt{github.\allowbreak{}com/\allowbreak{}PacktPublishing/\allowbreak{}Rust-\allowbreak{}for-\allowbreak{}CPP-\allowbreak{}Developers}。
+\section{创建和管理线程}
+\label{idx:idx_4e16aba1}
+\label{idx:idx_105d9fc1}
+在探究多线程编程的种种细节之前，我们必须先学会如何在线程上创建并运行代码。在本节中，我们将考察 Rust 标准库对线程的支持，并借助 crate 生态的一些额外帮助。
+\subsection{创建新线程}
+\label{idx:idx_e6318b15}
+每个程序都从单个线程开始，我们通常称之为\emph{主线程}。程序使用的每个线程都拥有自己的栈和指令指针，除非另有指示，它会独立于任何其他线程完成自己的工作。要创建新线程，我们必须与操作系统和运行时设施交互，以创建一个线程并为它分配资源。然后，我们必须给它一些活儿干。在 C++ 中，这些任务可以通过 \texttt{std::thread} API 或任意数量的平台专属 API 来完成。
+Rust 同样把线程创建功能放在 \texttt{std::thread} 模块中。在 Rust 中创建线程最简单的方式是使用 \texttt{std::\allowbreak{}thread::\allowbreak{}spawn} 函数。该函数与操作系统交互来创建一个线程，并开始执行作为参数传入的闭包。我们可以用几个打印语句构造一个非常简单的例子：
+\begin{codebox}[rust]
+println!("1. Hello world from main!");
+std::thread::spawn(|| {
+    println!("2. Hello world from thread!");
+});
+println!("3. Hello world from main!");
+\end{codebox}
+当程序使用多个线程时，我们对不同线程上操作的相对执行顺序只有有限的控制。在前面的程序中，\texttt{"2"} 和 \texttt{"3"}打印可能以任意顺序发生。在某些语言环境中，类似的程序甚至可能让并发打印的输出交错在一起，但 Rust 会在幕后做一些工作，确保来自不同线程的打印互不干扰。
+\label{idx:idx_df2ffab8}
+像这个例子中创建的这样的线程，在 Rust 术语中称为\emph{分离的}线程。这意味着我们无法控制线程相对于程序其余部分何时执行完毕。程序甚至可能在线程上的代码开始执行之前就退出了。然而，我们往往需要控制线程的执行。为此，\texttt{spawn}函数会返回一个 \texttt{JoinHandle} 对象，我们可以用它来确保线程的操作已经完成。\emph{汇合（join）}一个线程，意思是等待它运行到完成：
+\begin{codebox}[rust]
+println!("1. Hello world from main!");
+let handle = std::thread::spawn(|| {
+    println!("2. Hello world from thread!");
+});
+handle.join().unwrap();
+println!("3. Hello world from main!");
+\end{codebox}
+当我们调用 \texttt{join()} 函数时，程序的主线程会一直等待，直到 \texttt{handle} 所代表的线程彻底完成它的工作，然后才继续往下走。在这种情况下，我们现在应该能看到三个打印每次都按相同顺序出现。
+Rust 中的闭包会隐式\emph{捕获（capture）}其内部使用的变量，也就是说，它会自动借用闭包内引用到的、来自外层作用域的任何变量。如果我们需要把数据传入线程，就必须通过闭包的捕获来实现。这一功能与 C++ 中对应的 lambda 特性类似，只是没有为每个变量指定具体的捕获模式。相反，Rust 编译器会根据变量在闭包内部的使用方式，决定如何捕获每个变量——是作为 \texttt{\&T} 还是 \texttt{\&mut T}。让我们试着把数据传入线程，看看会发生什么：
+\begin{codebox}[rust]
+println!("1. Hello world from main!");
+let message = String::from("2. Hello world from thread!");
+let handle = std::thread::spawn(|| {
+    println!("{}", message);
+});
+handle.join().unwrap();
+println!("3. Hello world from main!");
+\end{codebox}
+如果我们尝试运行它，很快就会发现它无法编译。闭包试图借用 \texttt{message} 变量，但编译器无法保证，在我们将要借用的 \texttt{message} 变量被丢弃之前，闭包已经执行完毕。编译器必须能够证明，被借用的值在派生线程的整个生命周期内始终有效，否则就会违反 Rust 的安全规则。
+\label{idx:idx_2fd9d805}
+在 C++ 中，使用跨线程传递的 lambda 时，这其实是一个极其容易犯的错误。程序员偶尔会错误地以引用方式捕获一个变量，而被引用的数据在线程仍在执行时就被析构了。Rust 会帮我们捕获这种情况。要解决这个问题，我们必须使用另一种捕获模式。Rust 提供了\emph{移动闭包（move closure）}，它会取得所有被捕获变量的所有权，而不是借用它们。让我们用移动闭包重做前面那个同样的例子：
+\begin{codebox}[rust]
+println!("1. Hello world from main!");
+let message = String::from("2. Hello world from thread!");
+let handle = std::thread::spawn(move || {
+    println!("{}", message);
+});
+handle.join().unwrap();
+println!("3. Hello world from main!");
+\end{codebox}
+现在，一切如预期般工作。线程的闭包取得了 \texttt{message} 数据的所有权，现在由它按照自己的节奏负责丢弃这些数据。如果在 \texttt{message}变量被闭包捕获之后再试图使用它，Rust 编译器就会报错，就如同在单线程程序中任何一次试图使用所有权已发生改变的数据一样。
+但让我们更深入地探究一下。最初那个 Rust 编译器错误为什么会发生？我们可以看到，线程早在 \texttt{message} 数据离开作用域、被丢弃之前就已经汇合了。让线程借用那份数据本不应该造成任何生命周期或安全问题。为什么编译器看不到这一点呢？
+\label{idx:idx_c23e452d}
+答案在于，\texttt{std::\allowbreak{}thread::\allowbreak{}spawn} 函数要求它的闭包具有 \texttt{'static}生命周期。请记住，\texttt{'static} 生命周期要求一个引用在整个程序的生命周期内都指向有效数据。闭包的生命周期会传播到它所捕获的任何引用上。这样一来，Rust 允许线程运行到超出其声明所在作用域的范围，但无法对提前汇合这类行为进行静态推理。对于那些不需要与主线程共享的数据，使用移动闭包通常是解决这个问题最安全、最简单的办法。\texttt{'static} 生命周期这一要求可能相当受限，因为 Rust 对象很少会存活到程序的整个生命周期。在某些情况下，我们可以通过使用\emph{作用域线程（scoped thread）}来绕开这个问题。
+\subsection{作用域线程}
+\label{idx:idx_105f2f98}
+\label{idx:idx_6c040b37}
+作用域线程（scoped thread）是标准 C++ 中不存在的一个概念。在 Rust 中，它向借用检查器提供关于线程存活时长的额外信息，使之能更好地判断哪些构造可以允许、哪些应当禁止。特别地，作用域线程使我们能够让多个线程同时借用一个不含 \texttt{'static} 生命周期的不可变数据。\texttt{std::\allowbreak{}thread::\allowbreak{}scope(\allowbreak{})\allowbreak{}} 函数会创建一个作用域，并提供一个对象（传统上命名为 \texttt{s}），我们可以用它来创建依附于该作用域的新线程。当执行到达作用域末尾时，我们在该作用域内创建的线程会被自动汇合（join）。下面借助一个例子来直观展示这一点，仍然使用打印输出：
+\begin{codebox}[rust]
+std::thread::scope(|s| {
+    s.spawn(|| {
+        println!("Hello from thread one!");
+    });
+    s.spawn(|| {
+        println!("Hello from thread two!");
+    });
+});
+\end{codebox}
+和之前一样，我们无法保证两条消息的打印顺序。我们\emph{确实}得到的是编译器强制执行的保证：我们派生的线程，以及捕获到其中的任何内容，都会在 \texttt{s} 被丢弃之前释放。此前，在使用
+\texttt{std::\allowbreak{}thread::\allowbreak{}spawn} 时，编译器无法就线程
+\label{idx:idx_ec78f9e5}
+\label{idx:idx_f788c16a}
+何时结束执行施加任何保证。有了作用域线程，编译器现在能准确知道每个线程何时完成，从而可以在一个精确得多的生命周期内充分利用借用检查器。
+我们可以立刻利用这一点，在两个线程之间共享如前所述的不可变、非 static 数据：
+\begin{codebox}[rust]
+let message = String::from("Shared message");
+std::thread::scope(|s| {
+    s.spawn(|| {
+        println!("Hello from thread one: {}", message);
+    });
+    s.spawn(|| {
+        println!("Hello from thread two: {}", message);
+    });
+});
+\end{codebox}
+我们捕获到作用域中的一切，其存活时间都必须长于 \texttt{s} 对象，所以 \texttt{message} 对象仍然必须声明在 \texttt{std::\allowbreak{}thread::\allowbreak{}scope} 调用之外。但这比使用 \texttt{std::\allowbreak{}thread::\allowbreak{}spawn(\allowbreak{})\allowbreak{}} 时不得不面对的那些限制要好得多。派生线程（无论是否带作用域）都是一项代价高昂的操作。如果我们的工作可以拆分成许多小任务，为每个任务都派生一个新线程往往是低效的。此时我们可以改用\emph{线程池（thread pooling）}。
+\subsection{线程池}
+\label{idx:idx_5903331b}
+\label{idx:idx_d6e1609f}
+线程池是一种技术：预先派生若干线程（在程序启动时或按需），让它们进入等待状态。当有新工作到来时，不会即刻派生一个新线程来执行它，而是从池中挑选一个处于等待状态的线程（如果可用）。工作负载在选中的线程上执行，完成后该线程又回到等待状态。这样一来，我们就能在线程间运行大量工作，而不必在每次需要执行工作时都承担派生新线程带来的操作系统开销与内存分配成本。
+Rust 标准库中没有任何线程池功能，但 crate 生态提供了若干高质量的选项。流行的 \texttt{rayon} crate 暴露了与
+\texttt{std::\allowbreak{}thread::\allowbreak{}spawn(\allowbreak{})\allowbreak{}} 和 \texttt{std::\allowbreak{}thread::\allowbreak{}scope(\allowbreak{})\allowbreak{}} 极其相似的版本，它们在幕后于一个共享的
+线程池上执行工作负载。默认情况下，\texttt{rayon} 会根据操作系统报告的系统中逻辑 CPU 数量来创建其线程池。这个值虽然可以调整，但往往是一个合理的默认值。
+把前面那个作用域示例改用 \texttt{rayon} 来实现非常直接：
+\begin{codebox}[rust]
+let message = String::from("Shared message");
+rayon::scope(|s| {
+    s.spawn(|_| {
+        println!("Hello from thread one: {}", message);
+    });
+    s.spawn(|_| {
+        println!("Hello from thread two: {}", message);
+    });
+});
+\end{codebox}
+这里有一个小差别：\texttt{rayon} 的作用域线程实现中，\texttt{spawn} 函数会向闭包传入一个参数。这是另一个 spawner 对象，与 \texttt{s} 很相似，它的存在是为了让已派生的线程能够从自身内部向线程池添加更多工作。当不需要这个功能时，可以用特殊的 \texttt{\_} 变量名来忽略该参数。
+当用线程池处理大量工作时，理解工作如何被调度到池中各可用线程上就变得很重要。\texttt{rayon} 使用的一种流行调度方法称为\emph{工作窃取（work stealing）}。在工作窃取调度器中，线程池里的每个线程都关联着一个队列。当工作到来时，调度器可以自由地把工作添加到任意线程的队列中。随后各线程会执行自己队列中的每个工作负载，直到队列为空。
+\label{idx:idx_83119f66}
+\label{idx:idx_07b76883}
+工作窃取的机制在某个线程耗尽自己队列中的工作时发挥作用。在进入等待状态之前，它会检查其他线程的队列中是否有未处理的工作。如果有，它就会“窃取”该工作并在自己的队列上处理。这种方法确保工作总能得到高效处理，并在池中各线程之间良好分配，即便线程池已处于饱和状态。
+使用线程池库时要记住，每个不同的库通常都会管理自己的线程池。库无法以通用方式得知程序中是否已经存在其他线程池。当你在调试器或性能分析器中查看程序的线程，发现线程数量是预期值的两三倍时，可能会感到失望。现代程序中的线程未必是稀缺资源，所以这通常并无大碍。但意识到这种情况很重要，因为它会影响程序的整体性能与内存占用。最好尽可能只保留一个线程池，这样工作才能被最优地调度、资源占用也才能保持在可控范围内。
+在了解了 Rust 中创建和管理线程的几种不同方式之后，下面来讨论是什么让多线程程序难以编写，以及 Rust 如何提供帮助。
+\section{在 Rust 中安全地使用多线程}
+\label{idx:idx_b499a9c6}
+多线程代码会遇到若干单线程代码无需担心的问题。因此，它以困难且容易出错而著称。不过，在安全 Rust 中，这些问题有许多都被减轻甚至消除了。本节将考察其中几个问题，并了解 Rust 如何处理它们。
+\subsection{理解竞态条件}
+\label{idx:idx_1beae75a}
+\label{idx:idx_67b3ff99}
+多线程代码最常见的问题之一被称为\emph{竞态条件（race condition）}。这个词让人联想到车辆相互竞速的画面。在这个比喻中，赛道是我们代码中的某一段，而赛车则是相互竞争、比拼谁先执行完这段代码的不同线程。不过，在编程中，我们更关心的不是比赛的胜者，而是每辆车经过赛道上各点的先后顺序。
+当我们谈论代码中的竞态条件时，指的是由于不同线程以出人意料的顺序执行同一段代码，导致代码出现故障的情形。考虑对一个可变整数做简单的自增，这在 C++ 和 Rust 中写法完全相同：
+\begin{codebox}[text]
+i += 1;
+\end{codebox}
+取决于所用的 CPU 和编译器，在使用多个线程时，这简单的一行代码就可能构成竞态条件！更确切地说，它构成一次\emph{数据竞争（data race）}，即一种与各线程之间“对数据的写入相对于读取的先后顺序”有关的竞态条件。这个自增是\emph{读取-修改-写入}操作的一个简单例子。要完成自增，我们必须先从内存或寄存器读出该值以了解其初始状态，然后加 1 修改它，再把结果写回当初读取它的同一个寄存器或内存位置。
+作为读取-\allowbreak{}修改-\allowbreak{}写入操作，我们的自增分三步完成。在每一步之间，另一个线程都可能进来执行同样这三个步骤的任意组合。在下面这样的情形中，这完全可以正常工作：
+\begin{codeboxdark}
+Thread 1                |    Thread 2
+------------------------|----------------------------
+read, value = 1         |
+increment, value = 2    |
+write, value = 2        |
+                        |    read, value = 2
+                        |    increment, value = 3
+                        |    write, value = 3
+\end{codeboxdark}
+\label{idx:idx_e0aefdc3}
+\label{idx:idx_7835ba9d}
+但当这个比喻中的赛车以略有差异的速度行驶时，就可能出现下面这样的情况：
+\begin{codeboxdark}
+Thread 1                |    Thread 2
+------------------------|----------------------------
+read, value = 1         |
+                        |    read, value = 1
+increment, value = 2    |
+write, value = 2        |
+                        |    increment, value = 2
+                        |    write, value = 2
+\end{codeboxdark}
+我们有两个线程各自做一次自增，但其中一次丢失了，代码得到的是不正确的值 \texttt{2}，而不是期望的 \texttt{3}。这段代码在单线程环境下运行完美，一旦涉及多个线程就出错了。
+\label{idx:idx_93e6f852}
+\label{idx:idx_b473d354}
+这类问题十分隐蔽，起初可能并不明显，因为它取决于多个线程之间特定的执行顺序。这意味着这类问题会随着程序员无法控制的条件而时有时无，这极大地增加了多线程编程与调试的难度。在多线程的行话里，如果一个操作在单个步骤中完成、且在执行过程中无法被打断，我们就称它是\emph{原子}的。要让代码在被多个线程运行时保持正确（即\emph{线程安全}），我们必须确保每一个可能修改被一个或多个线程共享的数据的操作都是原子的。对许多编程语言来说，这是一个极其困难的问题，因为它们和 C++ 一样，几乎不提供语言层面的资源来识别和纠正数据竞争。
+然而，安全 Rust 可以在静态层面验证不存在数据竞争。虽然这并不能覆盖所有可能的多线程问题，但它消除了这一领域最大的问题之一，使其不再成为问题。这让我们在 Rust 中编写多线程代码时能有高得多的信心。下面来看看 Rust 是如何做到这一点的。
+\subsection{数据竞争与借用检查器}
+\label{idx:idx_a13611f5}
+\label{idx:idx_c28c4c2b}
+要发生数据竞争，必须至少有一个线程正在写某个内存位置或寄存器，同时另一个线程也试图读或写同一位置。许多编程语言完全不关心对内存的写入发生在何时、以何种方式，但在 Rust 中，由于借用检查器的存在，这实际上是一个核心关注点。事实证明，借用检查器强制执行的这组限制，与确保多线程程序中不发生数据竞争所需的条件高度吻合。
+\label{idx:idx_fc3ef693}
+\label{idx:idx_1b52bf1a}
+为确保线程安全，我们必须保证在一个线程写内存时没有其他线程在读它。Rust 的做法是使用借用检查器，在多线程之间强制执行与单线程时相同的共享与可变性限制。要开始理解这种行为，一个好办法就是试着去破坏它，所以下面来看几个例子：
+\begin{codebox}[rust]
+let mut v = vec![1, 2, 3, 4, 5, 6];
+std::thread::spawn(move || v.push(7));
+std::thread::spawn(move || println!("{:?}", v));
+\end{codebox}
+如果 Rust 允许这样做，我们就能在向量被修改的过程中打印它。但由于借用检查器，我们得到的却是编译错误。\texttt{v} 向量已被移动进第一个线程，无法在该线程之外访问。此处借用检查器的限制与单线程程序完全相同。数据只能有一个所有者，因此一旦它被移动进某个作用域，外层作用域中的任何东西都无法再访问它。
+如果不用 \texttt{move} 会怎样？我们前面见过一个类似的例子：
+\begin{codebox}[rust]
+let mut v = vec![1, 2, 3, 4, 5, 6];
+std::thread::spawn(|| v.push(7));
+std::thread::spawn(|| println!("{:?}", v));
+\end{codebox}
+\label{idx:idx_0c98824f}
+\label{idx:idx_f9d7fcea}
+在这种情况下，这个例子无法编译，因为闭包可能比它所借用的 \texttt{v} 值的存活时间更长。这正是因为闭包上带有 \texttt{'static} 生命周期，如我们在上一节中讨论过的。
+如果改用作用域线程呢？
+\begin{codebox}[rust]
+let mut v = vec![1, 2, 3, 4, 5, 6];
+std::thread::scope(|s| {
+    s.spawn(|| v.push(7));
+    s.spawn(|| println!("{:?}", v));
+});
+\end{codebox}
+\label{idx:idx_f8aee235}
+同样，我们在这里遇到了一个标准的借用检查器错误：\texttt{"cannot borrow v as immutable}
+\label{idx:idx_394a07de}
+\texttt{because it is also borrowed as mutable"}。\texttt{v} 对象被借用进第一个线程，方式为
+可变引用，因此在该作用域结束前，其他线程都不能借用它。在正常的借用检查器行为与正确的生命周期标注共同作用下，Rust 标准库已把所有情况都覆盖到了。只要我们不使用 \texttt{unsafe} 关键字，就不会意外陷入一个线程读或写数据、同时另一个线程正在写该数据的境地。
+不过，标准库在某些情况下确实得费一番功夫。考虑
+\texttt{Rc<T>} 类型。这个类型的作用类似 C++ 中的 \texttt{std::\allowbreak{}shared\_\allowbreak{}ptr<\allowbreak{}T>\allowbreak{}}。每当该类型被克隆时，都会
+增加一个引用，并创建一个新的、拥有所有权的类型，指向同一份底层数据。当所有对该数据的现存引用都被丢弃、引用计数降为零时，底层数据也会被丢弃。这是 \texttt{clone} 的一种特殊实现，它创建同一个 \texttt{Rc<T>} 类型的多个拥有所有权的版本，它们都指向同一个内部对象和引用计数。只要内部数据有任何途径变为可变，这就会危及 Rust 的数据竞争安全性。
+\label{idx:idx_4b23ff69}
+事实证明，\texttt{Rc<T>} 类型常常被用来持有一个 \texttt{RefCell} 类型。\texttt{RefCell} 暴露了所谓的\emph{内部可变性（interior mutability）}。这是一种绕开借用检查器限制的方式，代价是犯错时会触发 panic。虽然使用它并不总是一个好做法，但 \texttt{RefCell} 在安全 Rust 中是被允许的，前提是它把编译期的安全检查变成了运行期检查。当 \texttt{RefCell} 被 \texttt{Rc<T>} 类型持有时，理论上我们可以把一个可变对象传递给多个线程。如果编译器允许这样做，那就意味着我们能在安全 Rust 代码中制造数据竞争。
+\label{idx:idx_a7681376}
+\label{idx:idx_3e1cb47a}
+\label{idx:idx_b621c382}
+\label{idx:idx_59ed7011}
+为处理这类情形，Rust 定义了两个 trait：\texttt{Send} 和 \texttt{Sync}。\texttt{Send} 和 \texttt{Sync} 都是标记 trait，这意味着它们不定义任何关联类型或函数，存在的唯一目的就是向编译器提供元数据。\texttt{Send} trait 表明某个类型可以安全地通过移动从一个线程发送到另一个线程。另一方面，当一个类型被标记为 \texttt{Sync} trait 时，它向编译器说明：多个线程共享指向该类型对象的 \texttt{\&T} 引用是安全的。因此，\texttt{Send} 关注的是能否把拥有所有权的数据传给线程，而 \texttt{Sync} 关注的是能否把借用的数据传给线程。
+\texttt{Send} 和 \texttt{Sync} trait 由编译器自动传播。在撰写本书时，这一点在 Rust 的各种 trait 中独一无二。这意味着，只要相应 trait 适用于某个类型的所有组成部分，该类型就会自动成为 \texttt{Send} 或 \texttt{Sync}。绝大多数的标准库类型都同时实现了 \texttt{Send} 和 \texttt{Sync}，因此我们在程序中能创建的大多数类型也会无需任何额外工作便实现 \texttt{Send} 和 \texttt{Sync}。
+\label{idx:idx_3056688e}
+\label{idx:idx_52c76222}
+Rust 标准库中有少数类型不实现 \texttt{Send} 和 \texttt{Sync} 的各种组合，因为当涉及多个线程时，它们的使用永远无法保证安全。裸指针就属于这一类，它同时限制了 \texttt{Send} 和 \texttt{Sync}。例如 \texttt{RefCell<T>}，如果 \texttt{T} 也实现了 \texttt{Send}，它就实现 \texttt{Send}，但它不实现 \texttt{Sync}。就 \texttt{Rc<T>} 而言，其引用计数的递增与递减并非原子操作，如果允许它跨线程传递，就可能遭致数据竞争，因此它既不实现 \texttt{Send} 也不实现 \texttt{Sync}。
+\label{idx:idx_f3cc6215}
+\label{idx:idx_b0ea0134}
+借助借用检查器以及 \texttt{Send} 和 \texttt{Sync} trait，Rust 能够有效地保证安全代码中不存在数据竞争。这并不意味着 Rust 语言能保护我们免受所有可能的多线程问题的影响，但通过为我们提供一条消除数据竞争的途径，它解决了多线程编程中最常见、最难验证的问题之一。
+不过，我们可能会觉得借用检查器在这里的限制过于苛刻、过于生硬。毕竟，我们偶尔确实需要跨线程共享数据。而且，要从多线程中获得任何有用的加速，这往往是一项必需。下一节将考察 Rust 如何让我们安全地跨线程共享数据。
+\section{跨线程同步数据}
+\label{idx:idx_cbc641b6}
+共享数据必须跨线程进行\emph{同步}，才能被正确地共享。这意味着\emph{读}和\emph{写}都必须是原子操作。许多语言都提供了一套\emph{同步原语}来让用户处理这些问题，Rust 也不例外。本节将考察 Rust 如何部署这些特殊类型的对象，同时又仍然在安全代码中禁止数据竞争。
+\subsection{互斥}
+\label{idx:idx_6cff257d}
+\label{idx:idx_e94f5196}
+同步原语是一类特殊的对象，可以用来让某段代码中的数据操作相对于该段代码的其他每次调用都是原子发生的。最常见的同步原语是\emph{互斥锁（mutex）}，它是“互斥”（mutual exclusion）的简称。互斥锁在某些平台 API 中还有别的名字，比如\emph{临界区（critical section）}，但归根结底，互斥锁的目标是确保同一时刻只有一个线程能执行特定的一段代码。
+在大多数 API 中，互斥锁的典型用法是在受保护代码段的开头调用 \texttt{lock()} 函数，并在受保护代码段结束时调用相应的 \texttt{unlock()} 函数。当互斥锁被锁定时，只有持有锁的线程才能继续。任何试图锁定该互斥锁的其他线程都会被置于等待状态，直到互斥锁被解锁，它才能继续。许多语言提供了“作用域式”API，在作用域对象被构造和析构时自动锁定和解锁互斥锁。这有助于避免程序员遗忘解锁互斥锁这一严重错误，该错误可能导致其他任何试图锁定该互斥锁的线程无限期等待。
+\label{idx:idx_84aa00f2}
+\label{idx:idx_d6c1cdef}
+Rust 通过 \texttt{std::\allowbreak{}sync::\allowbreak{}Mutex<\allowbreak{}T>\allowbreak{}} 结构体提供互斥锁。在 Rust 中，互斥锁对象保护的不是一段代码，而是某一份特定的共享数据。\texttt{Mutex} 类型充当共享数据的包装器，只有在互斥锁被锁定时才允许修改该数据。
+下面来看一个例子。不用前面那个不安全的自增，我们可以把一个简单的自增包进互斥锁中，以确保它能安全地跨线程工作：
+\begin{codebox}[rust]
+use std::sync::Mutex;
+fn increment_safe(i: Mutex<u32>) {
+    let mut i = i.lock().unwrap();
+    *i += 1;
+}
+\end{codebox}
+我们 \texttt{Mutex} 类型的 \texttt{lock()} 函数会返回一个 \texttt{MutexGuard} 对象。这个守卫对象有两个作用：既允许访问底层数据，又确保当前作用域结束时互斥锁被解锁。我们对锁的 \texttt{Result} 调用 unwrap。虽然 \texttt{unwrap()} 有时是一种糟糕的做法，但锁定出错意味着互斥锁在另一个线程上被持有时触发了 panic，因此在这种特定情形下用 \texttt{unwrap()} 传播 panic 是合适的。
+\label{idx:idx_5be70179}
+\label{idx:idx_72ed3555}
+遗憾的是，这个例子并不通用，因为我们的 \texttt{Mutex} 被移动进了这个函数。由于所有权规则一般不允许存在多个所有者，在当前的实现中，我们无法用这个函数跨多个线程共享数据。为解决这个问题，我们也许想重新考虑 \texttt{Rc<T>} 类型，但我们前面看到，这个类型既不是 \texttt{Send} 也不是
+\texttt{Sync}。那么，如果它既不能作为拥有所有权的数据发送给另一个线程，也不能作为
+借用的数据与另一个线程共享，它又如何能解决我们的问题呢？
+\subsection{原子引用计数}
+\label{idx:idx_8d9351a1}
+Rust 标准库还提供了另一种智能指针：\texttt{std::\allowbreak{}sync::\allowbreak{}Arc<\allowbreak{}T>\allowbreak{}} 类型。这个类型具有与 \texttt{Rc<T>} 相同的基本功能，也就是说它的作用类似
+\label{idx:idx_f0fa667b}
+C++ 中的 \texttt{std::\allowbreak{}shared\_\allowbreak{}ptr<\allowbreak{}T>\allowbreak{}}。然而，\texttt{Arc<T>} 是专门为允许跨
+线程共享而设计的。这意味着，只要它持有的泛型 \texttt{T} 类型也实现了 \texttt{Send} 和 \texttt{Sync}，它就同时实现 \texttt{Send} 和 \texttt{Sync}。\texttt{Arc} 开头的 “A” 代表 “atomic”（原子），表明这个类型在递增或递减其引用计数时不会遇到线程安全问题。
+\texttt{Arc} 类型内部的数据一般不可变。这条规则有少数例外，但总的来说，出于多线程用途，它持有的会是某种专为处理可变性而构建的东西，比如 \texttt{Mutex}。因此，\texttt{Arc<\allowbreak{}Mutex<\allowbreak{}T>\allowbreak{}>\allowbreak{}} 是在 Rust 中跨线程共享并同步特定数据的常见方式。\texttt{Mutex} 确保同一时刻只有一个线程在读或写数据，而 \texttt{Arc} 类型确保我们可以把同一个 \texttt{Mutex} 对象作为拥有所有权的数据传给多个线程，而不会造成生命周期问题。而在这一切的底层，\texttt{Send} 和 \texttt{Sync} trait 确保所有部分协同正确运转。
+回到前面某个例子，让我们把它改成线程安全的：
+\begin{codebox}[rust]
+let mut v = vec![1, 2, 3, 4, 5, 6];
+std::thread::spawn(|| v.push(7));
+std::thread::spawn(|| println!("{:?}", v));
+\end{codebox}
+\label{idx:idx_016eb8c1}
+\label{idx:idx_9edc9d5d}
+我们从一个整数 \texttt{Vec} 开始，一个线程向列表中添加，另一个线程打印结果列表。此前，由于 \texttt{v} 上存在数据竞争，Rust 不允许我们编译这个例子。有了 \texttt{Arc<\allowbreak{}Mutex<\allowbreak{}T>\allowbreak{}>\allowbreak{}}，我们就能让它工作起来，但需要一些额外的代码来处理生命周期与同步：
+\begin{codebox}[rust]
+let v = vec![1, 2, 3, 4, 5, 6];
+let owned_data = Arc::new(Mutex::new(v));
+let data = Arc::clone(&owned_data);
+let thread_a = std::thread::spawn(move || {
+      let mut locked = data.lock().unwrap();
+      locked.push(7);
+});
+let data = Arc::clone(&owned_data);
+let thread_b = std::thread::spawn(move || {
+      let locked = data.lock().unwrap();
+      println!("{:?}", *locked);
+});
+thread_a.join().unwrap();
+thread_b.join().unwrap();
+\end{codebox}
+和之前一样，我们从一个向量 \texttt{v} 开始，但立即把它包装进 \texttt{Arc<\allowbreak{}Mutex<\allowbreak{}T>\allowbreak{}>\allowbreak{}}。\texttt{Mutex} 取得 \texttt{v} 的所有权，而 \texttt{Arc} 管理我们互斥锁的生命周期。在把数据传入每个线程之前，我们会先调用 \texttt{Arc::clone}，从而创建一个新的、拥有所有权的 \texttt{Arc} 对象，它可以被干净地传入 \texttt{spawn} 闭包。这里我们调用的是 \texttt{Arc::clone}，而不是 \texttt{.clone()}。虽然两者都能用，但 \texttt{Arc::clone} 通常因更清晰而更受青睐，因为这一特定的
+\texttt{Clone} 实现是在递增一个已有对象的引用计数，而不是创建一个
+像普通 \texttt{clone()} 调用那样的全新对象。
+这里我们应当注意，我们是直接调用 \texttt{Mutex} 的 \texttt{lock()} 函数，从
+\texttt{Arc<\allowbreak{}Mutex<\allowbreak{}T>\allowbreak{}>\allowbreak{}} 调用。我们能这样做，是因为 \texttt{Arc<T>} 被设计成能够把 \texttt{Deref} 融入其
+其中包含 \texttt{T} 类型。回想一下 Rust 中的 Deref 强制转换（deref coercion）这个概念，这意味着我们可以借助 \texttt{Arc<T>} 对象调用 \texttt{T} 的函数，而无需任何额外的语法。\texttt{Mutex} 的守卫对象（guard object）使用了同样的技巧，让我们能够从守卫对象调用 \texttt{Vec::push}，例如 \texttt{locked.\allowbreak{}push(\allowbreak{}7)\allowbreak{}}。在不调用函数、而是要做别的事情时，我们必须用 \texttt{*} 手动解引用守卫对象，比如把它传给 \texttt{println!} 宏时。
+\label{idx:idx_997cade8}
+\label{idx:idx_d53931f2}
+这项工作的最终成果是一个程序，它能安全地从多个线程操作并读取同一份数据，既不会破坏数据，也不会让任何线程看到某个操作执行到一半的状态。线程的执行顺序仍然是任意的。如果在 Rust playground 或本地运行这个示例，我们会观察到，取决于两个线程访问 \texttt{Mutex} 的先后顺序，它有时打印六个值，有时打印七个值。
+虽然这个程序的输出可能没多大用处，但从 Rust 的视角看它依然是可靠的（sound），因为它没有数据竞争。Rust 无法防范由线程调度顺序造成的竞态条件。各种危险，例如\emph{死锁}——两个线程各自等待对方持有的资源——在安全 Rust 中完全可能掉进去。编写多线程代码时仍然必须小心，但我们不该因此忽视一个更重要的事实：Rust 在编译期强制保证无数据竞争。
+现在我们已经理解了 Rust 中多线程与同步的基础知识，接下来看看一些在 Rust 里经常出现、且很有用的多线程模式。
+\section{实用的多线程技术}
+\label{idx:idx_2504dca4}
+软件开发中的多线程技术大概能写满好几本书，而 Rust 特别支持其中一些尤为强大的技术。本节我们将介绍几种具体技术，它们在 Rust 中行之有效，并且在整个标准库与 crate 生态中都得到良好支持。
+\subsection{用 Rayon 实现并行迭代器}
+\label{idx:idx_2d05937a}
+在 C++ 生态中，OpenMP、微软的并发运行时 ConCRT，以及 Intel 的 Thread Building Blocks 等库，让我们能够实现普通 C++
+\label{idx:idx_1f13f2de}
+\texttt{for} 循环的并行版本。在并行循环中，循环每一次迭代的处理都会被推送到一个线程
+\label{idx:idx_9947db7f}
+池中去执行。循环结束时，所有线程都会被 join。在可以安全使用这一构造的场景下，它能带来显著的程序加速，并以大多数程序员都极易上手的方式引入多线程优化。
+在 Rust 中，我们可以使用构建在标准迭代器接口之上的类似机制。在之前讨论线程池时我们已经遇到过 \texttt{rayon} crate，而它最受欢迎的特性之一就是对并行迭代器的支持。把 Rust 的迭代器库与其天然无数据竞争的特性结合起来，就得到了一种易用、高可靠的方法，能以安全而健壮的方式把现有代码改造成并行代码。
+许多 crate 都提供一个 \texttt{prelude} 子模块，可用于一次性自动导入若干定义。用 \texttt{cargo add rayon} 把 \texttt{rayon} crate 添加到项目之后，我们只需在程序顶部导入 prelude，这就是使用并行迭代器所需的全部设置：
+\begin{codebox}[rust]
+use rayon::prelude::*;
+\end{codebox}
+接下来，我们只需要一个能在整个线程池上并行执行的迭代器表达式。先从简单的开始：
+\begin{codebox}[rust]
+let v = vec![0, 1, 2, 3, 4, 5];
+let doubled = v.iter().map(|x| x * 2).collect::<Vec<_>>();
+println!("{:?}", doubled);
+\end{codebox}
+这个迭代器表达式只是把列表中的每个数字翻倍，再收集到一个新的向量中，然后我们把它打印出来。不出所料，程序的输出是 \texttt{[\allowbreak{}0,\allowbreak{} 2,\allowbreak{} 4,\allowbreak{} 6,\allowbreak{} 8,\allowbreak{} 10]\allowbreak{}}。
+乘以 2 这项工作并不特别消耗 CPU，但要把这项工作搬到并行迭代器上，我们只需把 \texttt{iter()} 改成 \texttt{par\_iter()}：
+\begin{codebox}[rust]
+let v = vec![0, 1, 2, 3, 4, 5];
+let doubled = v.par_iter().map(|x| x * 2).collect::<Vec<_>>();
+println!("{:?}", doubled);
+\end{codebox}
+\label{idx:idx_bafa47d1}
+\label{idx:idx_c59cea45}
+\label{idx:idx_a8fd1a0a}
+也许出人意料的是，输出仍然是 \texttt{[\allowbreak{}0,\allowbreak{} 2,\allowbreak{} 4,\allowbreak{} 6,\allowbreak{} 8,\allowbreak{} 10]\allowbreak{}}，尽管这些工作现在是在 \texttt{rayon} 线程池上进行的。既然工作被分散到多个线程上并行处理，我们或许会以为输出会交错出现。然而，\texttt{rayon} 在内部做了处理，确保收集到的输出与输入保持相同的相对顺序，即便对它们所做的处理是并行的。
+并行迭代器这一概念极其强大。它带来了与 C++ 并行 \texttt{for} 构造相近的易用性，同时保持了 Rust 多线程安全保证。由于质量高、实用性强，\texttt{rayon} 是 Rust 生态中最受欢迎的 crate 之一。
+\subsection{使用通道}
+\label{idx:idx_a36a218f}
+\label{idx:idx_3c6fa202}
+通道（channel）表示一个用于在不同线程之间传递数据的队列。通道由它的\emph{生产者}（producer，即向队列添加数据的线程集合）和\emph{消费者}（consumer，即从队列取出数据的线程集合）来定义。
+\label{idx:idx_0ed6ccad}
+\label{idx:idx_aed4c49a}
+根据所允许的生产者与消费者数量的不同，通道有若干变体。这些变体分为“single”和“multiple”两类，其中“single”通常意味着出于性能或复杂度考虑的某种优化。我们用缩写来称呼这些队列，例如 \textbf{MPSC} 表示 \textbf{multiple-\allowbreak{}producer,\allowbreak{} single-\allowbreak{}consumer}，\textbf{MPMC} 表示 \textbf{multiple-\allowbreak{}producer,\allowbreak{} multiple-\allowbreak{}consumer}。MPMC 队列是另外两种队列的超集。
+\label{idx:idx_1f7582ea}
+\label{idx:idx_f5523ef5}
+MPSC 队列通常最有用，它也是 Rust 标准库在 stable 版本中实现的唯一一种通道。不过，nightly 版本的 Rust 正在开发 MPMC 队列。MPSC 队列允许我们在多个线程向队列添加值的同时对这些值做一些处理。
+\texttt{std::\allowbreak{}sync::\allowbreak{}mpsc} 模块包含两种通道。第一种是 \texttt{channel()}，它在生产者一侧从不阻塞，队列大小在概念上是无限的。第二种叫做
+\texttt{sync\_\allowbreak{}channel}，需要传入一个最大队列大小。如果超出这个队列大小，
+任何向队列添加数据的生产者都会阻塞，直到队列中出现可用空间。
+每种通道在创建时都会返回一个元组。元组中的两个对象分别称为\emph{发送端}（transmitter）和\emph{接收端}（receiver），通常分别记作 \texttt{tx} 和 \texttt{rx}：
+\begin{codebox}[rust]
+let (tx, rx) = std::sync::mpsc::channel();
+for i in 0..10 {
+      let tx = tx.clone();
+      std::thread::spawn(move || {
+            tx.send(i).unwrap();
+      });
+}
+drop(tx);
+for i in rx.iter() {
+      println!("{}", i);
+}
+\end{codebox}
+在这个示例中，我们从各个独立线程通过一个通道发送 10 个事件，并在主线程中把它们全部打印出来。如果在 playground 里运行这个示例，我们会看到这些整数以混乱的顺序打印出来，因为它们是以不可预测的顺序加入通道的。只要 \texttt{rx.iter()} 产生的迭代器仍在等待下一个被发送进队列的值，它每次调用内部的 \texttt{next()} 函数时都会阻塞。
+\label{idx:idx_c91bf47c}
+\label{idx:idx_ac4f16aa}
+发送端的行为有点像一个 \texttt{Arc}：我们必须先克隆它，才能把它传给线程。这会增加内部对存在多少个生产者的跟踪，而接收端需要据此判断自己是否还应该继续等待更多的值。每个线程向队列添加一个值后，都会尽责地丢弃自己那份 \texttt{tx} 副本，从而减少引用计数。当引用计数归零时，接收端就知道不可能再有值被加入队列了，于是停止等待。
+由于每个线程有一份 \texttt{tx} 克隆，主线程还留有一份，所以我们必须先显式丢弃主线程的那份 \texttt{tx}，否则调用 \texttt{rx.iter()} 时我们的 \texttt{for} 循环会永远阻塞，等待一个永远不会到来、来自主线程的值。如果我们确切知道队列中应当有多少个事件，比如这里我们知道恰好有 10 个，就可以逐个等待它们，而无需丢弃主线程的 \texttt{tx}：
+\begin{codebox}[rust]
+let (tx, rx) = std::sync::mpsc::channel();
+for i in 0..10 {
+      let tx = tx.clone();
+      std::thread::spawn(move || {
+            tx.send(i).unwrap();
+      });
+}
+for _ in 0..10 {
+      println!("{}", rx.recv().unwrap());
+}
+\end{codebox}
+在这种情况下，每次 \texttt{rx.recv()} 调用都会阻塞，等待发送端把下一个值加入队列。
+事实证明，通道是在线程之间传递值的出色而高效的抽象。它们通常比使用诸如 \texttt{Arc<\allowbreak{}Mutex<\allowbreak{}Vec<\allowbreak{}T>\allowbreak{}>\allowbreak{}>\allowbreak{}} 或
+\texttt{Arc<\allowbreak{}Mutex<\allowbreak{}Deque<\allowbreak{}T>\allowbreak{}>\allowbreak{}>\allowbreak{}} 之类的方式更高效、也更顺手。
+\subsection{原子操作与无锁编程}
+\label{idx:idx_1dbec30c}
+\label{idx:idx_075c99c5}
+我们回想一下，如果一个操作不会以执行到一半的状态被任何线程看到，那么它就是原子的。大多数现代 CPU 都有用于构造原子操作的特殊特性。在 C++ 中，
+\texttt{std::atomic} 类以平台无关的方式暴露了这些功能。类似地，在 Rust 中，
+\label{idx:idx_94da8b6a}
+\texttt{std::\allowbreak{}sync::\allowbreak{}atomic} 模块包含若干类型，它们为 Rust 的每一种原生整数类型和布尔类型都实现了对应的原子版本。
+\label{idx:idx_050b5300}
+前面我们谈到，自增是一种读取-\allowbreak{}修改-\allowbreak{}写入（read-\allowbreak{}modify-\allowbreak{}write）操作。CPU 级原子操作最基本的用途之一，就是把整数类型上的自增操作变成原子计算。这反过来又使它可以从多个线程安全地调用，这对于诸如在固定大小的对象池中分配下一个空闲槽位、或实现线程安全的 bump 分配器等场景都很有用。
+在 Rust 中，我们可以像下面这样演示原子自增：
+\begin{codebox}[rust]
+use std::sync::atomic::{AtomicUsize, Ordering};
+let atomic = AtomicUsize::new(0);
+std::thread::scope(|s| {
+      s.spawn(|| atomic.fetch_add(1, Ordering::SeqCst));
+      s.spawn(|| atomic.fetch_add(1, Ordering::SeqCst));
+      s.spawn(|| atomic.fetch_add(1, Ordering::SeqCst));
+});
+println!("{:?}", atomic);
+\end{codebox}
+这里有好几点值得讨论。首先，为什么我们能够在多个线程中修改 \texttt{AtomicUsize} 对象？这难道不会破坏借用检查器的限制吗？
+Rust 中的原子对象与 \texttt{RefCell}、\texttt{Mutex} 很像，都使用了内部可变性（interior mutability）。这意味着，在借用检查器看来这个对象是不可变的，但它在内部使用或暴露了一些技巧来安全地操作数据。\texttt{fetch\_add} 方法更是被特意定义为不需要可变的 \texttt{AtomicUsize}。由于底层实现在处理器层面是原子的，所以操作这个对象的值是线程安全的——尽管该 API 有意向借用检查器谎报了自己的行为。
+\label{idx:idx_57aec965}
+\label{idx:idx_d91377ff}
+第二点要注意的是我们必须传给 \texttt{fetch\_add} 的 \texttt{Ordering} 枚举。\texttt{Ordering} 枚举的不同取值与 C11 和 C++11 中的常量相对应。这些常量控制编译器与硬件对操作进行重排序的能力。编译器重排序与内存重排序是一个复杂的话题，C++ 和 Rust 的文档中都有解释，但重要的是要知道，
+\texttt{Ordering::\allowbreak{}SeqCst}（其中 SeqCst 表示“sequentially consistent”，即顺序一致）始终是最保守的
+\label{idx:idx_2851b07b}
+\label{idx:idx_e15da949}
+选项，它完全禁止任何重排序。其他选项可能会带来一定的加速，具体取决于算法和体系结构，但使用时必须格外小心。
+在 C++ 的 \texttt{std::atomic} 中，内存顺序参数是存在的，但默认就是顺序一致的。因此 C++ 代码可以随意忽略它们。然而 Rust 本来就没有默认参数，所以它要求为每个原子操作显式指定内存顺序。
+说了这么多，我们这个示例打印出来的值是多少呢？当然，它始终是 \texttt{3}。无论线程以何种顺序执行，它们都不可能因为某个线程恰好在错误的时刻撞上另一个线程而出错，因为所有操作都是原子的，不会被观察到处于执行到一半的状态。
+虽然能用到 \texttt{fetch\_add} 这类便捷方法很不错，但
+\texttt{std::\allowbreak{}sync::\allowbreak{}atomic} 中的类型还支持一种非常强大的多线程技术，叫做\emph{无}
+\emph{锁编程}。无锁编程极其复杂、极易出错，即便有 Rust 的各种保证也是如此，但与其他同步方式（例如互斥锁）相比，它能显著降低线程之间的争用（contention）。
+\label{idx:idx_09feb77e}
+\label{idx:idx_413b903f}
+\label{idx:idx_5af8ba80}
+\label{idx:idx_2d2581e1}
+\label{idx:idx_08a0968b}
+简单来说，如果始终至少有一个线程在取得进展，这个算法就被认为是无锁的。这种进展未必一定有用。事实上，取决于硬件，无锁程序可能会把同一个操作重复执行多次才能成功。但在无锁程序中，不可能出现所有线程都毫无进展的局面。这是个好消息，因为它消除了围绕\emph{优先级反转}（priority inversion）的几个臭名昭著的多线程问题——在优先级反转中，一个高优先级线程在等待某项可能永远不会被执行的工作，因为该工作被安排在了一个优先级很低的线程上。不同的处理器为无锁算法提供了不同的构建块，但 C++ 和 Rust 的原子 API 把它们归纳为一个基本操作：\textbf{比较并交换}（\textbf{CAS}）。CAS 可以看作一种特殊的赋值，只不过我们必须同时指定一个期望值和一个新值，而不只是新值。处理器首先原子地把当前值与期望值进行比较。如果两者相符，就赋上新值；否则操作失败，必须重试。
+在 Rust 的原子 API 中，CAS 这个概念有一个类似的名字：\texttt{compare\_\allowbreak{}exchange}。下面是用 Rust 原子类型实现原子自增的一个示例：
+\begin{codebox}[rust]
+let atomic = AtomicUsize::new(0);
+loop {
+      let expected = atomic.load(Ordering::SeqCst);
+      let new = expected + 1;
+      if atomic
+            .compare_exchange_weak(
+                  expected,
+                  new,
+                  Ordering::SeqCst,
+                  Ordering::SeqCst,
+            )
+            .is_ok()
+      {
+            break;
+      }
+}
+println!("{:?}", atomic);
+\end{codebox}
+我们把自增实现为一个循环，因为它必须不断重试，直到我们能够成功执行 CAS 操作。首先，我们加载当前值，以便拿它与期望值比较。接着，我们把新值指定为当前值自增后的结果。得到这两个值之后，我们调用 \texttt{compare\_\allowbreak{}exchange\_\allowbreak{}weak} 来尝试执行 CAS。
+\label{idx:idx_ebe378b8}
+\label{idx:idx_5a85701a}
+\label{idx:idx_2029366c}
+\label{idx:idx_e2ed7d77}
+如果当前值没有发生变化，CAS 就会成功，我们便退出循环，自增也就顺利完成了。如果当前值发生了变化，说明另一个线程修改了数据，我们必须从头重新执行整个操作。记住，在无锁编程中总有一个线程在取得进展，所以重试虽然看起来又复杂又低效，但实际上这种技术往往能带来极低的资源争用。关于这个示例还有两点需要注意。第一，示例中我们使用的是 \texttt{compare\_\allowbreak{}exchange\_\allowbreak{}weak}。\texttt{weak} 后缀意味着即使当前值没有发生变化，该函数也允许失败。在某些处理器上，这是 CAS 技术实现的一部分。这个函数的第二点古怪之处在于，它接收两个独立的
+\texttt{Ordering} 参数。在这种情况下，第一个内存顺序应用于交换成功时，而
+第二个内存顺序则应用于失败时。同样，你始终可以使用 \texttt{Ordering::\allowbreak{}SeqCst} 作为最保守的选项。
+无锁编程这个主题内容浩繁，这里只是极其简要的介绍。无锁算法是研究论文与大量验证的产物。不过，在需要最大吞吐量时它是一个很棒的工具，而且 Rust 对它的支持也很完善。
+\section{小结}
+在本章中，我们讨论了在 Rust 中创建和使用多线程的基础知识。我们考察了 Rust 在多线程环境中的安全保证，并学习了如何利用 Rust 对这一问题域的独特处理方式，在线程之间共享数据。随后，我们介绍了几种 Rust 支持的强大技术，它们有助于编写安全、可靠且高效的多线程程序。
+在下一章中，我们将看看 Rust 强大的宏系统。
+\needspace{26\baselineskip}
+\begin{samepage}
+\subsection{获取本书的 PDF 版本及更多内容}
+扫描二维码（或访问 \texttt{packtpub.\allowbreak{}com/\allowbreak{}unlock}）。按书名搜索本书，确认版本，然后按照页面上的步骤操作。
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\emph{注意：请把发票放在手边。直接从 Packt 购买的订单无需发票。}
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\end{samepage}

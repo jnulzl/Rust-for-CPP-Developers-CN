@@ -1,0 +1,566 @@
+Rust 的基准性能往往与现代 C++ 相当，但无论程序跑得多快，总有办法再榨出一点速度。本章将考察如何优化 Rust 程序的性能。
+我们能否做好优化，很大程度上取决于用来定位瓶颈的工具。虽然市面上有不少高质量的商业性能分析工具，但我们主要关注那些免费、且能跨多种平台工作的工具。
+本章将涵盖以下主要主题：
+\begin{itemize}
+  \item 理解安全 Rust 的性能
+  \item 度量 Rust 程序的性能
+  \item 用不安全 Rust 代码提升性能
+  \item 用 SIMD 指令优化
+\end{itemize}
+\section{技术要求}
+本章的示例使用 Rust 1.\allowbreak{}82.\allowbreak{}0，但它们同样适用于任何更新的版本。
+如果你在安装 Rust 时需要帮助，请参阅\emph{附录}。
+本章的代码文件可以在本书的 GitHub 仓库中找到：\href{https://}{\texttt{https://}}
+\texttt{github.\allowbreak{}com/\allowbreak{}PacktPublishing/\allowbreak{}Rust-\allowbreak{}for-\allowbreak{}CPP-\allowbreak{}Developers}。
+\section{理解安全 Rust 的性能}
+\label{idx:idx_407166aa}
+Rust 程序往往无需对其行为给予额外关注就能跑得不错。许多团队发现，仅仅是把代码用 Rust 重写一遍，性能就有所提升。然而，也有团队发现自己的 Rust 版代码比对应的 C 或 C++ 版本稍慢一些。我们该如何理解这件事？
+在本节中，我们将考察当程序需要尽可能高的性能时，使用 Rust 所带来的正面和负面后果。理解了 Rust 与 C++ 之间的主要性能差异之后，我们应当能对所写代码的预期性能形成一种直觉。
+\subsection{别名}
+\label{idx:idx_6a337166}
+\label{idx:idx_7aaf7177}
+C++ 程序经常成为\emph{别名}（aliasing）这一性能陷阱的受害者。当两个指针指向内存中的同一位置时，就说它们彼此\emph{别名}。如果一个指针 \texttt{x} 可能与指针 \texttt{y} 互为别名，那么对 \texttt{x} 的写入就有可能改变 \texttt{y} 所指向内存中的值。编译器必须考虑到这一点，在对 \texttt{x} 的任何写入之后都重新从内存加载 \texttt{y}，反之亦然。如果这两个指针实际上并不指向同一内存位置，这些加载与重加载就都是多余的，但编译器往往无法在编译期验证这一点，只能生成尽可能保守的代码。当别名出现在紧凑循环或其他性能关键场景中时，就会导致性能低下。
+\label{idx:idx_487b7ba5}
+\label{idx:idx_574bf977}
+编译器作者和语言设计者都认识到了这个问题，并试图找出缓解的办法。例如，C++ 标准规定两个类型不同的指针不能互为别名。于是编译器可以假定，\texttt{int*} 类型和 \texttt{float*} 类型永远不会指向内存中的同一位置，也就是说，处理这两个指针时可以省去所有多余的加载与重加载。这种优化称为\emph{基于类型的别名分析}（type-\allowbreak{}based alias analysis）或\emph{严格别名}（strict aliasing），但同样地，它只在两个指针类型不同时才能使用。
+基于类型的别名分析是一项出色的优化，在实践中非常合理。毕竟，合法的代码极少会把 \texttt{int*} 和 \texttt{float*} 类型当作互为别名——一般来说，同一块内存一次只能容纳这两种类型之一，因为它们的位模式和解释方式都不同。当然，如果程序员偏要违反这条规则，让两个类型不同的指针互为别名，编译器就会产生未定义行为，而且常常生成错误的代码。
+当程序员面对的是两个类型相同的指针时，就不能指望基于类型的别名分析来避免多余的重新加载了。针对这种情况，许多编译器提供了一个关键字，让程序员可以向编译器承诺两个指针不互为别名。这通常是关键字 \texttt{restrict} 的某种变体，它在 C99 规范中为 C 语言所标准化。各种编译器特有的 \texttt{restrict} 关键字变体对达到最优性能可能是必需的，但它意味着程序员与编译器之间的一种契约，而这种契约很难静态验证。如果使用了 \texttt{restrict} 关键字，但程序的行为发生了变化，或者程序员误用了这个函数，编译器照样会欣然产生未定义行为，再一次在毫无警告的情况下生成错误的代码。
+\label{idx:idx_85a43e64}
+而 Rust 编译器则不同：只要程序使用的是 Rust 的安全子集，凡是触犯别名问题，它就不会编译通过。回想一下，任何被可变借用的对象在任一时刻都只能有一个引用。安全 Rust 的静态保证禁止我们制造出两个彼此独立的可变引用指向同一内存位置的情形。Rust 编译器会把「不存在别名」这一信息告知其后端 LLVM，后者于是生成不含任何冗余内存加载的机器码。
+由于 Rust 的安全规则正是为避开别名而精心调校的，我们能从 Rust 那里「免费」获得这种优化；而许多 C++ 程序仍然受困于本不该有的多余内存重新加载。把严格别名优化与 \texttt{restrict} 结合起来，写得足够仔细的 C++ 程序往往也能达到与 Rust 编译器相当的代码生成。但在 Rust 中，这些保证是语言语义的一部分，而在 C++ 中，要获得并维持它们需要格外小心。
+\subsection{初始化与边界检查}
+\label{idx:idx_395ec22e}
+安全 Rust 中与代码性能相关的一个方面是：编译器不允许读取未初始化的内存。以数组为例，这可能意味着整个内存区间都会被初始化，即使它最终根本用不到。当数组被用作字节缓冲区时，很可能出现的情况是：数组内容在初始化之后马上就会被新数据完全覆盖。这时，花在初始化缓冲区上的时间实际上是白费了。
+我们在前面几章也看到，Rust 安全契约的很大一部分涉及在运行时强制执行内存边界。这对切片、数组和向量尤其重要。每一次索引操作不仅要读取内存、返回缓冲区中对应位置的值，还必须检查所用的下标没有越过缓冲区末尾。在紧凑循环中，这些检查会占用相当可观的时间。虽然我们明白安全是有益的，但如果能去掉部分或全部边界检查，紧凑循环或许就能快得多。
+初始化与边界检查的开销并非只是纸上谈兵，它偶尔会在真实场景中显现出来。2016 年，一个把 Brotli 压缩算法从 C 移植到 Rust 的团队注意到，Rust 版本的性能比原来的 C 版本更慢。在他们去掉开销高昂的初始化和边界检查之后，性能提升了 10\% 以上。虽然初始化与边界检查的开销通常换来非常划算的取舍，但在紧凑循环中，它会对程序性能产生很大影响。
+初始化和边界检查都是重要的安全机制，它们让程序行为可预测，并避免若干类错误。但安全 Rust 所做的取舍，与较老的 C 和 C++ 风格（举例来说）所做的取舍，会导致非常不同的性能考量。当使用 \texttt{std::array} 和 \texttt{std::vector} 这类现代容器时，C++ 在行为和性能上都比使用 C 风格惯用法时更接近 Rust。
+\subsection{移动与克隆}
+\label{idx:idx_3ee089fe}
+在错误的时间和地点进行堆分配，其性能代价会迅速累积。虽然这几乎是每种编程语言都可能踩到的坑，但 Rust 受到的影响方式很独特。安全 Rust 的种种限制常常会把新手引入低效的克隆——只是为了让自己写的程序能通过编译器严格的借用检查约定。一旦如此，程序性能可能严重下降。
+但不高效克隆可能导致的堆分配增加还不是全部。在学习借用检查器时我们了解到，可能引发堆分配的深拷贝或克隆，是通过显式调用 \texttt{.clone()} 完成的。其他所有拷贝都是浅拷贝，具有
+\texttt{move} 语义，它们绝不会引发堆分配。普遍使用 \texttt{move} 语义可以成为
+一项意义重大的优化，对那些使用可增长、堆分配缓冲区的类型而言尤其如此，例如
+\texttt{String} 和 \texttt{Vec}。
+自 C++11 起，C++ 也有了作为优化手段的 \texttt{move} 语义。我们理应预期，正确且普遍使用 \texttt{move} 的 C++11 代码会与 Rust 程序表现非常接近。但 C++ 中有几个让情况变复杂的因素。首先，\texttt{move} 构造函数可以由程序员提供，因此其实现可能很低效。其次，在某些场景中必须显式调用
+\texttt{std::move} 函数才能启用 \texttt{move} 语义。忘记使用它
+往往会导致走上更慢的路径。
+\label{idx:idx_c5ebd064}
+两种语言围绕 \texttt{move} 语义所做的选择很有意思：它们走了不同的路径，最终却到达了相似的地方。Rust 做出这些选择，不仅是出于性能考虑，也是为了实现它的安全模型。而 C++ 则是在多年之后才把 \texttt{move} 语义加入语言，目的就是提升性能。在这两种语言中，我们都应该在性能敏感的代码里尽量避免拷贝和堆分配；实在无法避免时，则应确保恰当使用 \texttt{move}。理解 Rust 与 C++ 之间的这些差异很重要，因为它们能让我们对代码的性能形成直觉。但在着手改进性能时，绝不能只靠直觉。我们必须始终从性能度量开始。
+\section{度量 Rust 程序的性能}
+\label{idx:idx_bc9f66b1}
+在理解如何提升程序性能之前，我们必须先确切知道程序中哪一部分慢。找出程序中哪些部分运行缓慢的过程称为\emph{性能分析}（profiling）。本节将考察几种常见的性能分析方法，并看看 Rust 生态如何支持它们。
+\label{idx:idx_b09838c2}
+每一种性能分析方法都会给你的程序运行时增加一些开销。做性能分析时存在一种普遍的取舍：性能分析本身的开销越大（并因此使程序运行时间越长），我们收集到的信息就越有用。本节将按侵入性从低到高的顺序考察各种性能分析方法。不过首先，我们需要有可度量的对象。
+\subsection{构造测试用例}
+\label{idx:idx_846f5fb1}
+对于每一种性能度量方法，我们都将使用同一个测试用例。矩阵乘法是一个既有意思又贴近真实的测试用例，很适合用来开启我们的优化之旅。它在许多不同的应用中都十分常见，不受磁盘或网络带宽的制约，而且有足够的深度，能给我们带来颇具挑战性的优化问题。
+首先，我们创建一个库 crate 来容纳这个示例：
+\begin{codeboxdark}
+$ cargo new --lib performance_test
+\end{codeboxdark}
+在 \texttt{src/lib.rs} 文件中，我们添加下面这个函数，它将成为我们性能度量和优化工作的主要对象：
+\begin{codebox}[rust]
+type Matrix = Vec<Vec<f32>>;
+ pub fn matrix_multiply_original(a: Matrix, b: Matrix) -> Matrix {
+     let a_rows = a.len();
+     let a_cols = a[0].len();
+     let b_cols = b[0].len();
+     let mut out = vec![vec![0.0; b_cols]; a_rows];
+     for i in 0..a_rows {
+         for j in 0..b_cols {
+             for k in 0..a_cols {
+                 out[i][j] += a[i][k] * b[k][j];
+             }
+         }
+     }
+     out
+ }
+\end{codebox}
+这里我们不讨论所实现运算的数学原理，代码本身相当直白。为了简洁，我们为 \texttt{Matrix} 声明了一个类型别名，但每个矩阵的底层不过是一个「向量的向量」。对于传入矩阵的合法性，我们做了几个假设——如果这是真实程序，就必须强制满足这些假设。第一，矩阵 \texttt{a} 的列数必须等于矩阵 \texttt{b} 的行数。第二，每个列向量都必须与各矩阵中第一个列向量的大小相同。最后，任何矩阵的维度都不能为 \texttt{0}。除此之外，执行 \texttt{multiply} 就只是初始化一个新的输出矩阵，再把值正确填进去。
+由于我们会在此过程中不断改进这个示例，这个特定版本被命名为
+\texttt{matrix\_\allowbreak{}multiply\_\allowbreak{}original}。我们会把每个修订版本都作为一个新函数保留下来，以便
+日后在它们之间做比较。我们会在 \texttt{src/lib.rs} 中用别名，把当时想度量的那个函数暴露为 \texttt{matrix\_\allowbreak{}multiply}：
+\begin{codebox}[rust]
+pub use matrix_multiply_original as matrix_multiply;
+\end{codebox}
+\label{idx:idx_1b007b76}
+这样一来，我们就能方便地在算法的不同实现之间切换，从而跟踪自己的进展。
+要为矩阵乘法构造一个有意义的测试用例，我们需要加入一些手段：配置参与相乘的矩阵大小、用随机值填充矩阵，最后执行实际的乘法。先来写一个工具函数，用于创建一个填满随机值的矩阵。这需要安装 \texttt{rand} crate 才能工作：
+\begin{codeboxdark}
+$ cargo add rand
+\end{codeboxdark}
+然后，把这个函数加入 \texttt{lib.rs}：
+\begin{codebox}[rust]
+fn make_random(rows: usize, columns: usize) -> Matrix {
+     let rng_iter = &mut rand::rng().random_iter();
+     (0..rows).map(|_| Vec::from_iter(rng_iter.take(columns))).collect()
+ }
+\end{codebox}
+这个函数使用 \texttt{rand} crate 创建一个迭代器，我们可以反复调用它来获得随机数。接着，我们用范围迭代器 \texttt{(0..rows)} 逐个创建一组长度为 \texttt{column} 的向量，最后把所有这些 \texttt{column} 向量收集成一个由行组成的向量。
+现在，我们开始做一个命令行界面来配置测试程序。要为库 crate 添加命令行界面，我们在 crate 中创建一个名为 \texttt{src/\allowbreak{}bin/\allowbreak{}cli.\allowbreak{}rs} 的文件。由于它将是与本 crate 关联的唯一二进制目标，使用 \texttt{cargo run} 时它会自动运行。下面创建该目录和源文件：
+\begin{codeboxdark}
+$ mkdir src/bin
+$ echo "" > src/bin/cli.rs
+\end{codeboxdark}
+在 \texttt{cli.rs} 中，我们首先从自己的 crate 引入所需的函数：
+\begin{codebox}[rust]
+use performance_test::{make_random, matrix_multiply};
+\end{codebox}
+\label{idx:idx_1d0f05c8}
+接下来，我们写一个小工具函数来处理命令行参数。程序将接受三个命令行参数，分别表示：矩阵 \texttt{a} 的行数 \texttt{m}；矩阵 \texttt{a} 的列数与矩阵 \texttt{b} 的行数（二者相同），记为 \texttt{k}；以及矩阵 \texttt{b} 的列数 \texttt{n}：
+\begin{codebox}[rust]
+fn get_args() -> Vec<usize> {
+     let mut ret = Vec::new();
+     for arg in std::env::args().skip(1).take(3) {
+         if let Ok(val) = arg.parse::<usize>() {
+             ret.push(val);
+         }
+     }
+     ret
+ }
+\end{codebox}
+\label{idx:idx_041bd2c0}
+这个函数用了几个小技巧，把命令行参数变成一个包含三个元素的 \texttt{Vec}。\texttt{std::\allowbreak{}env::\allowbreak{}args(\allowbreak{})\allowbreak{}} 返回一个命令行参数的迭代器。我们跳过第一个参数——和 C++ 中的 \texttt{argv[0]} 一样，它保存的是程序名。然后我们调用 \texttt{parse} 函数，把三个命令行参数都从文本转换为 \texttt{usize}。当然，如果我们传入的不是数字的合法文本表示，这一操作就可能失败，所以我们要确保只在操作成功时才把结果推入输出向量。重要的是，只有当三个参数都存在且都能正确转换为 \texttt{usize} 时，我们返回的 \texttt{Vec} 才可能正好包含三个元素。这组小小的工具函数写完后，\texttt{src/\allowbreak{}bin/\allowbreak{}cli.\allowbreak{}rs} 中的 \texttt{main} 函数现在可以写成这样：
+\begin{codebox}[rust]
+fn main() {
+     let args = get_args();
+     if args.len() != 3 {
+         eprintln!("Usage: m k n");
+         return;
+     }
+     let (m, k, n) = (args[0], args[1], args[2]);
+     let a = make_random(m, k);
+     let b = make_random(k, n);
+     let _c = matrix_multiply(a, b);
+ }
+\end{codebox}
+我们首先从辅助函数 \texttt{get\_args} 得到 \texttt{Vec<usize>} 形式的参数。唯一合法的情况就是三个参数，所以如果数量不对，就说明其中某个参数被省略了，或者传入了无效值。这种情况下，我们打印一条简短的使用说明并退出。随后，我们构造矩阵 \texttt{a} 和 \texttt{b} 并执行乘法。由于这只是用于分析性能的测试程序，返回的矩阵 C 并无实际用途，我们在它前面加上 \texttt{\_}，告知编译器它可能未被使用。
+我们会在本章中不断改进和使用 \texttt{matrix\_\allowbreak{}multiply} 函数，而就目前而言，我们已经有了一个可运行的测试程序，可以向它传入不同的参数，观察它们对性能的影响。一切应当大体符合预期：较大的取值会明显比小的取值耗时更多。
+\label{idx:idx_7c3dedf7}
+尽管我们亲手把它写了出来，但对这个程序的性能其实还知之甚少。举例来说，参数解析和乘数初始化的开销，与乘法本身的开销相比如何？我们可以靠猜来回答，但要做严肃的性能工作，直接度量是无可替代的。
+\subsection{为代码块添加标注}
+\label{idx:idx_3d7ade6e}
+最简单、往往也侵入性最低的性能分析手段，是手工为程序中的若干片段添加标注。这通常要找一个合适的库，并在希望度量的作用域里放一个结构体实例。该结构体会在构造和析构时分别记录当前执行时间，并记录两者之差。这个差值就代表两个时间戳之间所执行代码耗费的时间。一个非常简单的例子是用 \texttt{elapsed} crate 为测试程序添加标注。首先要把它加入项目：
+\begin{codeboxdark}
+$ cargo add elapsed
+\end{codeboxdark}
+这个 crate 提供了 \texttt{measure\_\allowbreak{}time} 函数。它接收一个闭包作为要度量的代码，并返回一个元组，其中包含经过的时间和闭包的返回值。这为大致了解程序各个部分提供了一个简便途径。首先，我们在 \texttt{src/\allowbreak{}bin/\allowbreak{}cli.\allowbreak{}rs} 顶部引入 \texttt{measure\_\allowbreak{}time} 函数：
+\begin{codebox}[rust]
+use elapsed::measure_time;
+\end{codebox}
+然后，就可以用它来为矩阵乘法计时：
+\begin{codebox}[rust]
+let (elapsed, _c) = measure_time(|| matrix_multiply(a, b));
+    println!("Multiply took {}", elapsed);
+\end{codebox}
+函数返回的时间（在本例中我们把它命名为 \texttt{elapsed}）是 \texttt{std::\allowbreak{}time::\allowbreak{}Duration} 类型的一个小型包装，它实现了 \texttt{std::\allowbreak{}fmt::\allowbreak{}Display} trait。这让我们能以非常友好的方式打印所耗时间。可以给测试程序传几个不同的参数，看看差异：
+\begin{codeboxdark}
+$ cargo run --release -- 4 4 4
+     Finished `release` profile [optimized] target(s) in 0.03s
+      Running `target/release/cli 4 4 4`
+ Multiply took 917.00 ns
+ $ cargo run --release -- 400 400 400
+     Finished `release` profile [optimized] target(s) in 0.00s
+      Running `target/release/cli 400 400 400`
+ Multiply took 199.89 ms
+\end{codeboxdark}
+我们可以看到，运行时间随工作量增加而增加——这显而易见——但同时也能看到，
+\texttt{elapsed} crate 为我们提供了一种非常友好且精确的方式，来描述乘法究竟花了多少
+时间。
+\label{idx:idx_da15dddb}
+\texttt{elapsed} crate 很适合快速了解小型程序的性能，但对于更复杂的情况，用这种方法识别瓶颈所需收集和分析的数据量可能相当繁重。正因如此，许多程序员更偏爱的一种方法是生成\emph{火焰图}（flame graph）。火焰图是程序运行时的一种可视化表示。这类图会显示若干嵌套的\emph{跨度}（span，用于跟踪被标注的代码片段）或\emph{样本}（sample，用于跟踪程序执行中的离散时间点）。\emph{火焰图}这个名字来自它的呈现方式：各个跨度往往形成一连串尖峰，看上去就像从火焰中升起的火苗。如果你的程序标注得当，火焰图可以成为快速理解其性能的有效方式。
+火焰图是一种非常流行的程序性能表示形式，因此有若干工具可用于生成和查看它。Chrome 等浏览器内置了查看器，此外还有基于 Web 的查看器，例如 \textbf{Firefox Profiler} 或 \textbf{SpeedScope}。不过，在进一步深入火焰图之前，我们应该先用矩阵乘法的示例生成一张。
+在 Rust 生态中，从跨度生成火焰图的一种方法是使用流行的
+\texttt{tracing} crate 及其配套 crate \texttt{tracing-\allowbreak{}flame}。这些 crate 产生的输出
+必须由 \texttt{inferno} 工具处理，才能生成可加载的火焰图。对于大型应用，这或许是个不错的路子，但为了让示例保持简单，我们改用
+\texttt{flame} crate。这个 crate 暴露了直截了当的 API，能够直接生成火焰
+图，无需其他工具。
+\label{idx:idx_73e981c2}
+为了让示例更有意思一些，我们可以修改 \texttt{main} 函数，在目标尺寸下生成 50 次乘法。我们会为初始化阶段（用随机值填充矩阵）和乘法运算都加上标注。这样就能很好地了解两者各自的相对开销。不过首先要添加 \texttt{flame} crate：
+\begin{codeboxdark}
+$ cargo add flame
+\end{codeboxdark}
+做完这一步，我们就可以添加循环和标注了：
+\begin{codebox}[rust]
+for _ in 0..50 {
+     flame::start("initialization");
+     let a = make_random(m, k);
+     let b = make_random(k, n);
+     flame::end("initialization");
+     flame::start("multiply");
+     let _c = matrix_multiply(a, b);
+     flame::end("multiply");
+ }
+ let f = std::fs::File::create("perf.html").unwrap();
+ flame::dump_html(f).unwrap();
+\end{codebox}
+\texttt{flame} crate 的 \texttt{start} 和 \texttt{end} 函数用于界定我们的区间，\texttt{dump\_html} 函数则把性能信息渲染成一个 HTML 文件，可以在任意浏览器中打开。这类火焰图不需要任何专用查看器，但仍然能提供足够有趣的程序运行时长信息。
+如果你一直在跟着做，现在可以试着生成一下火焰图。调整不同的矩阵尺寸，看看初始化和乘法的相对开销会如何变化。也可以试着把区间放到 \texttt{matrix\_\allowbreak{}multiply\_\allowbreak{}original} 内部，看看结果是否与放在函数外部时不同。
+手动标注的区间如果放得恰当，会非常有用。它们的运行时开销通常低到可以长期留在代码里，从而能捕捉到那些否则不会被发现的意外变慢。不过它们也有局限，最明显的一点是只能测量被标注的部分。
+\label{idx:idx_b3f7859f}
+要想更深入地了解程序的性能，我们需要更好的工具。我们要超越手动标注，转而使用能告诉我们更多代码执行信息的工具，最好是完全不需要改动程序。
+\subsection{采样分析器}
+\label{idx:idx_de78ed22}
+采样分析器的工作原理是：以固定间隔对程序的调用栈进行快照或采样。采样分析器通常每秒采样几百到几千次。把它们汇总到查看器中后，程序中可能的性能热点就会表现为采集到样本最多的地方。采样率越高，所采集数据的准确度和采样过程的运行时开销也都会随之增加。采样率通常默认设为一个在这两个因素之间取得平衡的值，既让我们有足够的信息做决策，又不会对运行时产生不利影响。
+采样分析器通常会提供插桩库，程序可以用它们在性能剖析结果中，除调用栈之外再补充一些高层级的标注，这样就能在同一次可视化中把两者结合起来。这让我们同时获得高层级和低层级的信息，使采样分析器成为性能排查工具箱中最强大的工具之一。
+采样分析器有多种商业产品可选。由于采样过程往往需要与操作系统或系统级库交互，其中许多产品只针对某个特定平台做过调优。在本章中，我们将演示一款跨平台的开源工具 \texttt{samply}，它存在于 Rust 的 crate 生态中。我们可以用 \texttt{cargo} 安装 \texttt{samply}：
+\begin{codeboxdark}
+$ cargo install --locked samply
+\end{codeboxdark}
+在继续之前，我们需要往 \texttt{Cargo.toml} 文件里添加一项配置，也就是我们的
+\texttt{performance\_\allowbreak{}test} crate：
+\begin{codebox}[text]
+[profile.release]
+debug = true
+\end{codebox}
+\label{idx:idx_550bb3b7}
+我们必须为发布构建配置设置 \texttt{debug =\allowbreak{} true}。这个设置听起来有些奇怪，但这样做并不会改变发布构建的运行时性能，它只是让编译器包含完整的调试信息，而 \texttt{samply} 需要这些信息才能把调用栈解析到具体的源代码行。
+添加这些信息后，我们重新构建性能测试，注意要以 \texttt{release} 模式构建，以启用编译器优化：
+\begin{codeboxdark}
+$ cargo build --release
+\end{codeboxdark}
+现在，我们终于可以开始进行性能剖析了。使用 \texttt{samply} 非常直接。从我们的
+\texttt{performance\_\allowbreak{}test} crate 中，我们可以用 \texttt{samply record} 命令运行 \texttt{cli} 二进制文件。下面
+我们给它传入一些较大的矩阵尺寸，以便得到有用的剖析结果：
+\begin{codeboxdark}
+$ samply record target/release/cli 500 500 500
+\end{codeboxdark}
+这条命令的语法很简单。\texttt{samply record} 首先接收我们想运行的程序路径，随后是想要传给它的任意参数。如果你使用的是 Windows，则需要运行 \texttt{target/\allowbreak{}release/\allowbreak{}cli.\allowbreak{}exe}。如果一切正常，程序运行结束后 \texttt{samply} 会自动在你的默认浏览器中打开剖析结果。
+\begin{myNotic}{注意}
+在本书写作时，\texttt{samply} 所使用的 Web 工具无法在 Safari 浏览器中加载剖析结果。如果 Safari 是你的默认浏览器，你可以在运行 \texttt{samply} 时把 \texttt{BROWSER} 环境变量设置为其他浏览器的可执行文件，以便正确加载剖析结果。
+\end{myNotic}
+\texttt{samply} 在浏览器中打开剖析结果后，会在后台保持一个本地 Web 服务器运行。该服务器用于把源代码和符号解析信息发送给查看剖析结果的 Web 工具。如果你终止了这个 Web 服务器，之后又需要重新加载剖析结果，可以用 \texttt{samply load profile.\allowbreak{}json.\allowbreak{}gz} 启动一个新的服务器并重新打开 Web 工具。
+采样剖析告诉我们的具体信息，会因运行所在的机器以及传给程序的参数不同而有所差异。此时非常重要的一点是，花些时间亲自查看 \texttt{samply} 生成的剖析结果，尤其是在你刚接触性能排查或相关工具的情况下。
+在我的机器上，执行 50 次两个随机 500x500 矩阵的乘法大约需要 17 秒，采样剖析显示大约 40\% 的时间花在 \texttt{index} 函数中或其附近。此外，大约 16\% 的时间花在一个类似的
+\texttt{index\_mut} 函数上。我们可以推测，这些就是在对
+\label{idx:idx_f9444fa8}
+向量进行读取或写入索引时调用的函数，而这是矩阵乘法代码中非常常见的一种操作。
+此时，我们应该开始遵循科学方法来改进代码：先提出一个理论，再加以验证。一种理论是，Rust 边界检查的开销可能导致索引操作出现明显的变慢。另一种理论则认为，这不过是内存访问成本或缓存使用模式造成的。
+这些都是很好的理论，但我们需要办法来验证。我们可以用采样分析器观察在做出改动后耗时如何变化。这通常是一种很好的策略，但有时我们正在考察的性能瓶颈属于一个非常漫长的过程，或者难以捕捉。在这些情况下，我们可以借助另一种很有用的性能分析工具来验证理论：基准测试。
+\subsection{基准测试}
+\label{idx:idx_9d15fe49}
+\label{idx:idx_3494cae1}
+\emph{基准测试}是指把程序的一小部分单独拿出来测量其性能的做法。被基准测试的代码单元往往只是一个函数。基准测试并不像采样分析那样用来发现程序把时间花在了哪里，而是为了让我们能够比较同一段代码的两种实现，并回答一个出人意料地困难的问题：哪种实现更快，快多少。这给了我们一种工具，既能验证优化是否有效，又能检验关于某段代码性能的各种理论。
+基准测试可能出人意料地复杂。基准测试套件必须处理的最大问题是方差。操作系统和硬件那些混乱的现实情况，会让同一段代码由于运行时其他活动的影响而耗时不同。基准测试套件通常用分两个阶段运行代码的方式来应对这个问题。第一个阶段是 \emph{预热}（warm-\allowbreak{}up）阶段。它会先运行代码几次，通常不测量性能。预热阶段的目标是确保可能影响代码的各种缓存——不论是在代码本身还是在操作系统层面——都已被完全填充并保持稳定，然后再开始运行性能测试。
+第二个阶段会运行代码若干次并测量每一次的运行。随后它会用均值、标准差等统计指标，对代码的运行时性能给出一种概率性的分析。这种策略不仅让我们对分析结果有很高的信心，还意味着我们可以针对比通常可行范围小得多的代码片段来测量改进。一个好的基准测试套件会尝试把这种分析为你解读成单一数字：这段代码比上次运行快了多少，或慢了多少。
+Cargo 通过 \texttt{cargo bench} 命令内置了对基准测试的支持，但它要求我们提供一个真正运行基准测试的 \emph{框架}（harness）。官方正在开发一个内置框架，但在本书写作时，它尚未进入稳定版 Rust 发行版。因此，在官方基准测试功能稳定之前，我们必须使用来自更广泛 Rust 生态的 crate 来运行基准测试。用于此目的最常用的 crate 是 \texttt{criterion}。要开始使用，我们首先要把 \texttt{criterion} 作为 \texttt{dev} 依赖添加到项目中：
+\begin{codeboxdark}
+$ cargo add --dev criterion
+\end{codeboxdark}
+接下来，我们必须把一个 Rust 源文件添加到 crate 根目录下的 \texttt{benches/} 文件夹中：
+\begin{codeboxdark}
+$ mkdir benches
+\end{codeboxdark}
+\texttt{cargo bench} 会把 \texttt{benches/} 文件夹视为查找用户可能想要执行的基准测试的正确位置。
+现在，让我们在 \texttt{benches/\allowbreak{}multiply.\allowbreak{}rs} 文件中创建基准测试本身：
+\begin{codebox}[rust]
+use criterion::{Criterion, criterion_group, criterion_main};
+use performance_test::{make_random, matrix_multiply};
+use std::hint::black_box;
+fn criterion_benchmark(c: &mut Criterion) {
+    let x = make_random(100, 100);
+    let y = make_random(100, 100);
+    c.bench_function("multiply 100x100", |b| {
+        b.iter(|| matrix_multiply(
+            black_box(x.clone()),
+            black_box(y.clone())
+        ))
+    });
+}
+criterion_group!(benches, criterion_benchmark);
+criterion_main!(benches);
+\end{codebox}
+\label{idx:idx_40985032}
+\label{idx:idx_86c7cee2}
+从高层看，我们的 \texttt{criterion\_\allowbreak{}benchmark} 函数会创建一些输入，并传入一个闭包，该闭包会多次执行我们取别名的 \texttt{matrix\_\allowbreak{}multiply} 函数。由于闭包会被多次调用，而我们的函数会取得参数的所有权，所以每次都需要克隆输入。如果我们认为这种克隆拖慢了基准测试，也可以把参数改成引用以避免克隆。
+\texttt{black\_box} 提示函数用于抑制那些可能影响基准测试运行时长的编译器优化。基准测试有意设计得与函数在真实程序中的任何用法都不太相像，我们希望确保编译器不会删除任何对代码计时可能很重要的计算。例如，一个激进的编译器可能会优化代码、把计算结果缓存起来，导致我们的函数只运行一次，而框架却期望它运行很多次。
+\texttt{criterion\_\allowbreak{}group!} 和 \texttt{criterion\_\allowbreak{}main!} 宏补全了运行基准测试所需的样板代码。但在此之前，我们必须往 \texttt{Cargo.toml} 中添加一段配置：
+\begin{codeboxdark}
+[[bench]]
+name = "multiply"
+harness = false
+\end{codeboxdark}
+这会告诉 Cargo，我们的基准测试位于 \texttt{multiply.rs} 文件中，同时关闭内置的基准测试框架。之所以禁用它，是因为我们使用的是 Criterion 的框架，不希望两者以任何方式发生冲突。
+现在，我们终于可以运行 \texttt{cargo bench} 来执行基准测试了。在我的系统上，报告显示 100x100 的矩阵乘法每次迭代大约耗时 2.\allowbreak{}2 \textbf{毫秒}（\textbf{ms}）：
+\begin{codeboxdark}
+multiply 100x100        time:   [2.2395 ms 2.2412 ms 2.2429 ms]
+\end{codeboxdark}
+\label{idx:idx_e66662e4}
+\label{idx:idx_277df2fc}
+从现在起，每次运行 \texttt{cargo bench}，\texttt{criterion} 都会把本次基准测试与之前的结果比较，并告诉我们基准测试是变快了、变慢了还是保持不变。现在正是利用我们从 \texttt{samply} 获得的信息来尝试改进函数性能的好时机。
+我们还记得，采样剖析揭示的主要问题是：这个函数有大量时间花在标准库中执行 \texttt{Vec} 索引的函数里。我们当时不确定这仅仅是访问内存的成本，还是与边界检查相关的开销。但如果我们仔细看看这个函数，也许能在这两方面都做出改进。
+我们 \texttt{matrix\_\allowbreak{}multiply} 函数的这个内层循环可能效率不高，因为它反复从内存加载、修改、再存回同一位置：
+\begin{codebox}[text]
+for k in 0..a_cols {
+    out[i][j] += a[i][k] * b[k][j];
+}
+\end{codebox}
+但在这个循环里我们根本没有修改 \texttt{i} 或 \texttt{j}，也就是说每次迭代都在向同一位置存储。我们可以改成只修改一个 \texttt{f32}，并仅在程序结束时才把它写入内存。让我们把 \texttt{matrix\_\allowbreak{}multiply\_\allowbreak{}original} 函数复制到一个名为 \texttt{matrix\_\allowbreak{}multiply\_\allowbreak{}indexing\_\allowbreak{}opt} 的新函数中试试看：
+\begin{codebox}[rust]
+let mut sum = 0.0;
+for k in 0..a_cols {
+    sum += a[i][k] * b[k][j];
+}
+out[i][j] = sum;
+\end{codebox}
+这段代码现在看起来好多了，根据手头的信息可以推测它会有所改进。现在计算应该发生在一个寄存器中，而 \texttt{out} 向量的边界只需要检查一次。但我们必须实际测量才能确认性能确实得到了改进。首先，让我们更新 \texttt{matrix\_\allowbreak{}multiply} 别名，使其指向新函数：
+\begin{codebox}[rust]
+pub use matrix_multiply_indexing_opt as matrix_multiply;
+\end{codebox}
+现在，我们可以运行 \texttt{cargo bench}，看看相对 \texttt{matrix\_\allowbreak{}multiply\_\allowbreak{}original} 的改进：
+\begin{codeboxdark}
+multiply 100x100         time:   [540.10 µs 540.25 µs 540.39 µs]
+                         change: [−75.920% −75.897% −75.874%] (p = 0.00 < 0.05)
+                         Performance has improved.
+\end{codeboxdark}
+\label{idx:idx_eebc83ee}
+\label{idx:idx_91af3b93}
+哇！仅凭这个简单的改动就提升了 75\%。当然，这个结果只是在我的特定机器上得到的，在其他硬件上会有所不同，但这看起来是个非常出色的改动。此时我们可能想再用采样分析器看一看，是否还有更明显的、容易摘取的成果，不过眼下这已经是一场大胜。我们会在下一节继续考察其他可能的改进，但先花一点时间回顾一下这里学到的东西。
+性能工作中最重要的一环是测量。硬件、操作系统、编译器以及我们自己的代码的复杂性叠加在一起，使得靠猜来推断程序或算法为何变慢，很少能奏效。
+\label{idx:idx_e7941561}
+\label{idx:idx_d0826e2c}
+我们已经看到，各种性能测量技术构成一个谱系：运行时开销与所获得的信息量彼此正相关，因此我们采用多种不同技术，以针对具体情况获取最佳信息。高层级标注、采样分析器和基准测试都位于这个谱系的不同位置，各自在不同的场合大放异彩。无论手头有哪些可用方法，对代码进行剖析都是帮助我们决定如何改进它的必要条件。
+在下一节中，我们将看看不安全 Rust 代码这门禁术，以及如何用它来继续改进我们的矩阵乘法示例。
+\section{用不安全 Rust 代码改进性能}
+\label{idx:idx_696e8711}
+虽然我们应尽可能优先使用安全 Rust 代码，但有些优化只有在不安全上下文中才会出现。不安全 Rust 代码正如其名……不安全。使用不安全 Rust 面临许多挑战，要正确使用它，需要对这门语言有深入得多的理解。本节我们只会考察不安全 Rust 世界中的一小部分内容。要更全面地了解这个主题，最好的参考资料是 \emph{The Rustnomicon}，网址为 \href{https://doc.rust-lang.org/nomicon/}{\texttt{https:/\allowbreak{}/\allowbreak{}doc.\allowbreak{}rust-\allowbreak{}lang.\allowbreak{}org/\allowbreak{}nomicon/\allowbreak{}}}。
+为提升性能而转入不安全代码并不总是必要的，但在少数情况下，对于真正关键的一段代码，它确实能帮助我们越过某条线。带着上一节的基准测试环境和矩阵乘法示例，让我们深入不安全 Rust 的世界，考察它帮助优化代码的两种具体方式。
+\subsection{消除边界检查}
+\label{idx:idx_52bc3eed}
+前面我们推测边界检查的开销浪费了程序的大量时间。现在，是时候验证一下了。尽管编译器在某些条件下能在安全代码中消除边界检查，但 Rust 允许你以不安全操作的形式无条件地消除它们。我们通常用索引运算符 \texttt{[]} 进行索引，此外也可以调用 \texttt{get()} 函数，它返回 \texttt{Option<T>}。\texttt{get()} 函数是 \texttt{slice} 类型的一部分，这意味着它也在 \texttt{Vec} 和数组等其他类型上实现——这些类型可以通过 \texttt{Deref} 转换为切片。这个函数让我们能通过处理 \texttt{Option} 的 \texttt{Some(T)} 和 \texttt{None} 两种情况，对边界检查的结果做出反应。当我们使用索引运算符 \texttt{[]} 时，越界索引会直接触发 panic，因此对于希望尽可能消除潜在 panic 的程序，\texttt{get()} 是个不错的选择。
+除了 \texttt{get()}，\texttt{slice} 类型还提供了 \texttt{get\_\allowbreak{}unchecked(\allowbreak{})\allowbreak{}}。这个不安全函数会返回索引操作的结果，无论索引是否在界内。我们可以用它省去边界检查，但当然必须格外小心，确保索引确实落在矩阵的合法边界之内，以避免未定义行为。在我们的矩阵乘法示例中，我们知道这一点成立，因为我们特意根据矩阵尺寸约束了循环索引。
+让我们从 \texttt{matrix\_\allowbreak{}multiply\_\allowbreak{}indexing\_\allowbreak{}opt} 开始，把它复制到一个新函数中，即
+\texttt{matrix\_\allowbreak{}multiply\_\allowbreak{}unsafe\_\allowbreak{}indexing}。然后我们把内层循环改成使用 \texttt{get\_\allowbreak{}unchecked}：
+\begin{codebox}[rust]
+let mut sum = 0.0;
+for p in 0..a_cols {
+    sum += unsafe {
+        a.get_unchecked(i).get_unchecked(p) *
+        b.get_unchecked(p).get_unchecked(j)
+    };
+}
+unsafe { *out.get_unchecked_mut(i).get_unchecked_mut(j) = sum };
+\end{codebox}
+所有 \texttt{unsafe} Rust 代码都必须位于 \texttt{unsafe} 块或函数内部。我们通常希望把 \texttt{unsafe} 块保持得小一些，而不是把整个函数都包进去。请记住，\texttt{unsafe} 是 Rust 中的一种审计工具。在判断程序是否维护了 Rust 的安全保证时，我们只需查看 \texttt{unsafe} 块中的代码。
+在这个示例中，我们还使用了 \texttt{get\_\allowbreak{}unchecked} 的可变版本，用于写入最终结果。我们应该能从这些改动中获得性能提升，但具体能提升多少并不清楚。同样，我们必须更新 \texttt{matrix\_\allowbreak{}multiply} 别名：
+\begin{codebox}[rust]
+pub use matrix_multiply_unsafe_indexing as matrix_multiply;
+\end{codebox}
+现在，让我们试着运行 \texttt{cargo bench}，看看 \texttt{criterion} 对我们新代码的评价：
+\begin{codeboxdark}
+multiply 100x100         time:   [358.54 µs 358.75 µs 359.05 µs]
+                         change: [−33.740% −33.696% −33.643%] (p = 0.00 < 0.05)
+                         Performance has improved.
+\end{codeboxdark}
+\label{idx:idx_c91bf658}
+又一次出色的改进！在这个例子中，\texttt{unsafe} 为我们带来了显著的收益，而且由于代码本身的结构，我们很有信心它不会越界写坏缓冲区。
+\subsection{避免昂贵的初始化}
+\label{idx:idx_7a94d94e}
+频繁初始化缓冲区可能是一种隐藏的性能隐患。当我们用分析器检测到它时，应该寻找方法将其降到最低，其中一些方法最终可能会用到不安全 Rust。
+有一点很重要：Rust 只初始化我们真正使用的那部分内存。举例来说，我们来看看 \texttt{Vec::\allowbreak{}with\_\allowbreak{}capacity(\allowbreak{})\allowbreak{}}。这个函数在概念上类似于
+C++ 中 \texttt{std::vector} 的 \texttt{reserve()} 函数。当用 \texttt{with\_\allowbreak{}capacity(\allowbreak{})\allowbreak{}} 创建一个 \texttt{Vec} 时，
+标准库会分配足以容纳我们指定元素数量的空间，但会让这块内存保持未初始化。这很合理，而且仍然是安全的，因为由于 \texttt{Vec} 从
+\texttt{std::slice} 继承而来的索引运算符带有边界检查，这块内存无法被访问。只有当我们在向量上调用 \texttt{push()} 添加
+元素时，这块内存才会被初始化。
+\label{idx:idx_9cb8022b}
+我们可以利用这一点来降低数组的初始化成本，例如把它们转换成 \texttt{Vec} 并使用 \texttt{with\_\allowbreak{}capacity(\allowbreak{})\allowbreak{}}。只要缓冲区是按线性顺序填充的，这种做法的效果就非常好，因为它仍然完全使用安全 Rust。事实证明，我们的 \texttt{matrix\_\allowbreak{}multiply} 示例正符合这种模式，因此我们只用安全 Rust 就能降低初始化成本。
+让我们把 \texttt{matrix\_\allowbreak{}multiply\_\allowbreak{}unsafe\_\allowbreak{}indexing} 复制到一个新函数中，即
+\texttt{matrix\_\allowbreak{}multiply\_\allowbreak{}init\_\allowbreak{}opt}，并更新类型别名。然后我们可以做如下
+改动：
+\begin{codebox}[rust]
+let mut out = Vec::with_capacity(a_rows);
+ for i in 0..a_rows {
+       let mut row = Vec::with_capacity(b_cols);
+       for j in 0..b_cols {
+             let mut sum = 0.0;
+             for p in 0..a_cols {
+                   sum += unsafe {
+                         a.get_unchecked(i).get_unchecked(p) *
+b.get_unchecked(p).get_unchecked(j)
+                   };
+             }
+             row.push(sum);
+       }
+       out.push(row);
+ }
+\end{codebox}
+然而，在我的机器上对这项改动做基准测试，结果却是性能略有下降。这令人失望，但理解其中的原因仍然有价值。初始化的成本只占函数运行时长的一小部分，因为它只发生一次，而内层循环会运行多次。变慢本身很可能是因为我们把一次内存分配挪进了内层循环。我鼓励你尝试通过预先初始化各行来解决这个问题。就本章而言，我们将换回 \texttt{matrix\_\allowbreak{}multiply\_\allowbreak{}unsafe\_\allowbreak{}indexing}，作为目前最快的示例。
+能按线性顺序填充缓冲区固然好，但这并不总是可行。当需要以非线性顺序填充缓冲区时，我们可能就得开始使用 \texttt{unsafe} 块了。最简单的做法同样涉及 \texttt{Vec::\allowbreak{}with\_\allowbreak{}capacity(\allowbreak{})\allowbreak{}}，随后调用不安全的 \texttt{Vec::\allowbreak{}set\_\allowbreak{}len(\allowbreak{})\allowbreak{}}。\texttt{set\_len()} 调用只是重设 \texttt{Vec} 的大小，而不会向其中推入任何元素。当我们把长度设为用 \texttt{with\_\allowbreak{}capacity(\allowbreak{})\allowbreak{}} 预留的数量时，就得到了一个完全未初始化的缓冲区，可以自由地写入任意元素。在调用那些我们确知其会填满整个缓冲区的 C API 时，这是个非常有用的技巧，但我们必须非常小心，不要在向量中那些未初始化的元素被写入之前读取它们。
+再来看未初始化内存更复杂的用法，Rust 提供了
+\texttt{std::\allowbreak{}mem::\allowbreak{}MaybeUninit} 类型。最简单的说，\texttt{MaybeUninit} 是围绕
+\label{idx:idx_e31fe6d4}
+我们想保持未初始化的内容的一种包装类型。让我们看一个把它用于简单可复制类型的例子：
+\begin{codebox}[rust]
+let mut my_usize_wrapper = MaybeUninit::<usize>::uninit();
+\end{codebox}
+这会创建一个围绕未初始化 \texttt{usize} 值的包装。程序员需要在某个时刻用 \texttt{MaybeUninit::\allowbreak{}write(\allowbreak{})\allowbreak{}} 函数向这个包装写入一个值：
+\begin{codebox}[text]
+my_usize_wrapper.write(0);
+\end{codebox}
+此时，\texttt{MaybeUninit} 持有的值已经初始化，但编译器没有任何办法验证这一点。由于我们身处 \texttt{unsafe} 的地盘，它只能相信我们做出了正确的选择。要把值从包装类型中取回来，我们调用 \texttt{MaybeUninit::\allowbreak{}assume\_\allowbreak{}init(\allowbreak{})\allowbreak{}}：
+\begin{codebox}[rust]
+let my_usize = unsafe { my_usize_wrapper.assume_init() };
+\end{codebox}
+这套围绕包装类型的“小把戏”，让我们能够告诉编译器不必操心初始化问题，只管相信我们已经正确地完成了初始化。\texttt{MaybeUninit} 是一个复杂的类型，在这里对它做完整解释并不合适。如果你确有使用它的需要，请查阅 Rust 文档。
+\label{idx:idx_2e7ac7eb}
+与往常一样，不安全代码非常难以驾驭，应尽可能避免使用。始终优先尝试用安全的替代方案进行优化。在本节中，我们展示了几种利用不安全 Rust 优化代码的方法。我们的 \texttt{matrix\_\allowbreak{}multiply} 示例表现良好，但显然还有更多潜力可以挖掘。而要进一步获得更好的性能，我们需要研究如何使用 SIMD 指令。
+\section{使用 SIMD 指令优化}
+\label{idx:idx_c76c5dac}
+\label{idx:idx_cdab9a88}
+编写计算密集的 CPU 代码最有效的方法之一，是利用许多处理器上都提供的 SIMD 指令集。\textbf{SIMD} 是 \textbf{单指令多数据}（single instruction,\allowbreak{} multiple data）的缩写，指的是一组能同时对多个值进行运算的指令。例如，如果我们需要对一维浮点数数组做一些数学运算，就可以用 SIMD 指令以数据块为单位来处理，在现代处理器上，每条指令最多可处理 512 位。
+在本节中，我们将探讨如何通过 Rust 那个高层、跨平台的 \texttt{std::simd} 模块来利用 SIMD 优化，该模块目前仅在 nightly Rust 上可用。为此，我们必须先搭建 nightly Rust 工具链，然后编写一个 SIMD 版的矩阵乘法并对其进行基准测试。
+\subsection{搭建 nightly Rust 环境}
+\label{idx:idx_ba751ed4}
+Rust 在 \texttt{std::arch}模块中暴露了一些映射到特定架构 SIMD 指令的内建函数（intrinsic）。要高效地使用这些内建函数，需要投入大量精力去理解你计划支持的每个平台的底层指令集。而且，如果你运气不好，用户并不只用一种类型的计算机，那就意味着要为每个受支持的架构编写完全独立的实现。维护多套实现本身就是挑战，再加上在它们之间做选择的编译期与运行期开销，可能让人不堪重负。
+在更广阔的生态中，有一些工具可以帮助解决这个问题。其中比较突出的一个是 Intel 的 \emph{ISPC} 编译器，它提供了一门类 C 的语言，用来编写性能密集型代码的核心（kernel）。这些代码随后会被编译成非常高效的、针对特定架构的 SIMD 实现，并可以链接进更大的程序，从而大大减少了维护多套架构专属方案的需要。
+Rust 内置了一个类似的高层 SIMD 库，名为 \texttt{std::simd}，但遗憾的是，它尚未稳定。这意味着它只能在 Rust 编译器的 nightly 版本中使用，不过计划在未来某个时候进入 stable 版的 Rust 发行版。我们将使用 nightly 编译器，为矩阵乘法示例添加一些 SIMD 改进。
+\begin{myNotic}{注意}
+Rust crate 生态还提供了 \texttt{packed\_\allowbreak{}simd} crate，它的 API 与 \texttt{std::simd} 非常相似。不过，\texttt{packed\_\allowbreak{}simd} 同样需要 nightly 编译器，所以我们的示例将坚持使用标准库版本。
+\end{myNotic}
+首先，我们必须用 \texttt{rustup} 确保已安装最新版本的 Rust \texttt{nightly}编译器。关于 \texttt{rustup} 或一般性地安装 Rust 的帮助，请参阅\emph{附录}：
+\begin{codeboxdark}
+$ rustup toolchain install nightly
+\end{codeboxdark}
+\label{idx:idx_720ba047}
+当我们安装了多个工具链时，可以向 Cargo、\texttt{rustc} 或任何其他受支持的 Rust 工具传入一个特殊标志，从而在它们之间进行选择：
+\begin{codeboxdark}
+$ cargo +nightly build
+$ cargo +stable build
+\end{codeboxdark}
+仅运行 \texttt{cargo build} 会调用默认工具链。在本节余下的内容中，我们假定 \texttt{stable} 是你的默认工具链。你可以用 \texttt{rustup}
+\texttt{toolchain list} 来核实这一点，或者查看 Cargo 或 \texttt{rustc} 的版本字符串。
+如果你需要把默认工具链改回 \texttt{stable}，可以运行以下命令：
+\begin{codeboxdark}
+$ rustup default stable
+\end{codeboxdark}
+理想情况下，我们希望测试项目在 \texttt{stable} 和 \texttt{nightly} 编译器下都能工作。毕竟，我们只有一个函数需要 \texttt{nightly}。Rust 社区中很多遇到这一问题的人，处理它的方式是使用\emph{特性（features）}。
+特性是在 \texttt{Cargo.toml} 中指定的布尔标志。如有需要，每个特性都可以引入自己的一组依赖，而我们可以在 crate 内于编译期检查某个特性是否启用。为了让测试项目同时支持 \texttt{nightly} 和 \texttt{stable} 工具链，我们要创建一个
+\texttt{nightly} 特性到 \texttt{Cargo.toml} 中，并用它来门控我们那些仅限 \texttt{nightly} 的代码：
+\begin{codeboxdark}
+[features]
+nightly = []
+\end{codeboxdark}
+这个特性定义非常简单，只是一个空数组。这个数组可以用来指定：如果启用了本特性，则必须同时启用其他特性。我们的 crate 只有一个特性，所以目前这就是我们所需要的全部。
+\label{idx:idx_f63d6564}
+接下来，我们必须开始在测试 crate 中使用这个特性。在代码里，我们可以用 \texttt{\#[cfg]} 属性把某些代码限定为仅在特定特性启用时才会在编译期被使用。最常见的用法是让测试只在运行 \texttt{cargo test} 时才编译：
+\begin{codebox}[rust]
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_nothing() {}
+}
+\end{codebox}
+在这个例子中，当不构建测试时，编译器会跳过整个 \texttt{tests} 模块。然而，我们需要一种方式，根据某个特性是否启用来有条件地编译代码。假设我们的 \texttt{nightly} 代码将放进 \texttt{src/simd.rs} 模块。那么只要把下面这几行放进 \texttt{src/lib.rs} 文件，就能仅当 \texttt{nightly} 特性启用时包含这个模块：
+\begin{codebox}[rust]
+#[cfg(feature = "nightly")]
+mod simd;
+\end{codebox}
+配置属性还可以用 \texttt{not} 修饰符取反。我们可以借此定义：当 \texttt{nightly} 特性启用时，把要基准测试的函数定义为 \texttt{simd::\allowbreak{}matrix\_\allowbreak{}multiply\_\allowbreak{}simd}；而当 \texttt{nightly} 未启用时，把它定义为 \texttt{matrix\_\allowbreak{}multiply\_\allowbreak{}unsafe\_\allowbreak{}indexing}（我们目前最快的版本）：
+\begin{codebox}[rust]
+#[cfg(feature = "nightly")]
+pub use simd::matrix_multiply_simd as matrix_multiply;
+#[cfg(not(feature = "nightly"))]
+pub use matrix_multiply_unsafe_indexing as matrix_multiply;
+\end{codebox}
+在编写任何使用 \texttt{std::simd} 的代码之前，我们必须完成最后一个步骤。在 \texttt{nightly} 编译器中处理 \texttt{unstable} 特性时，crate 必须显式声明将要使用哪些
+\texttt{unstable} 特性。这些声明要写在 crate 根文件的顶部。在我们的例子中，\texttt{std::simd} 受
+\label{idx:idx_16593081}
+\texttt{portable\_\allowbreak{}simd} 特性标志门控，所以我们需要把这条声明插入到
+\texttt{src/lib.rs} 的第一行来启用它：
+\begin{codebox}[text]
+#![feature(portable_simd)]
+\end{codebox}
+但等等！我们希望 crate 在 \texttt{stable} 和 \texttt{nightly} 两种编译器下都能编译。当然，\texttt{stable} 编译器不会容忍我们声明要使用一个
+\texttt{unstable} 特性。针对这类情况，Rust 提供了 \texttt{\#[\allowbreak{}cfg\_\allowbreak{}attr]\allowbreak{}} 属性。它
+让我们能够根据一个 \texttt{\#[cfg]} 字符串来有条件地设置属性。我们的声明最终看起来是这样的：
+\begin{codebox}[text]
+#![cfg_attr(feature = "nightly", feature(portable_simd))]
+\end{codebox}
+现在，我们只会告诉编译器我们在使用 \texttt{portable\_\allowbreak{}simd}，前提是我们用到了自己的
+\texttt{nightly} 特性。
+要用 \texttt{nightly} 特性进行基准测试，我们的命令行会像这样：
+\begin{codeboxdark}
+$ cargo +nightly bench --features nightly
+\end{codeboxdark}
+\label{idx:idx_b5569870}
+这会选择 \texttt{nightly} 编译器并启用 \texttt{nightly} 特性。至此，项目已经搭建完成，我们准备好编写 \texttt{matrix\_\allowbreak{}multiply} 函数的 SIMD 版本了。
+\subsection{编写 SIMD 函数}
+\label{idx:idx_d283d277}
+Rust 的可移植 SIMD 库的工作方式是提供一个结构体，它在某种数据类型和一个宽度之上做抽象。该库把它定义为 \texttt{std::\allowbreak{}simd::\allowbreak{}Simd<\allowbreak{}T,\allowbreak{} N>\allowbreak{}}，并提供了若干别名供我们使用。例如，\texttt{f32x4} 就是 \texttt{Simd<\allowbreak{}f32,\allowbreak{} 4>\allowbreak{}}，表示一个 128 位类型，其中打包了四个浮点数，通常对应一个 SIMD 寄存器。它可以被看作一个四元素数组 \texttt{[f32; 4]}，或者一个四元素的向量。
+\texttt{std::simd} 库为各种打包类型提供了别名，小到 \texttt{f32x1}，大到
+\texttt{f32x64}。对于任何硬件不直接支持的类型，编译器都会生成
+普通的、非 SIMD 的标量运算，其功能与 SIMD 代码相匹配，但要付出性能代价。因此，尽管我们在不同的硬件实现之上做了抽象，了解目标硬件的能力仍然非常重要。为了把这一点应用到我们的代码上，我们需要一个策略，而策略往往始于弄清楚：我们可以在哪里把正在执行的运算压缩进一个 \texttt{Simd<T, N>}类型。看看我们的 \texttt{matrix\_\allowbreak{}multiply} 函数，可以看到在最内层循环中，我们线性地、一次一个元素地遍历 \texttt{a[i]} 数组：
+\begin{codebox}[text]
+for k in 0..a_cols {
+    sum += a[i][k] * b[k][j];
+}
+\end{codebox}
+如果我们能改为同时对四个元素执行同样的运算，会怎样呢？不过 \texttt{b}矩阵在这里很棘手，因为我们是在按矩阵的列而不是行来遍历。矩阵定义了\emph{转置（transpose）}操作，它沿着矩阵的主对角线翻转矩阵，使得我们可以像索引行一样去索引原本是列的元素。如果我们把 \texttt{b} 矩阵转置，也许就能通过在内存中线性地遍历两个矩阵来加速这个算法。这不是本章要尝试的优化，但它是一个值得探讨的有趣练习。
+我们最初的策略是尝试用 128 位寄存器高效地加载和处理 \texttt{a} 矩阵的行。对于 \texttt{b} 矩阵，我们同样会使用 128 位寄存器，但我们会坦然接受把列加载进寄存器时的一些低效，并希望 SIMD 运算仍然足够有效，能给我们带来性能提升。
+我们还需要处理 \texttt{sum}。如果我们一次处理 \texttt{a} 和 \texttt{b} 的四个元素，那么 \texttt{sum} 变量里就会留下四个独立的值。这个 \texttt{f32x4} 向量的每个分量，都是我们在循环的每次迭代中所计算的、每隔四个取一个的那些值之和。要得到真正的和，我们必须把向量的所有分量加在一起。
+让我们带着这个策略开始重建内层循环。首先，我们修改循环，使每次循环时把 \texttt{k} 的索引向前推进四个值：
+\begin{codebox}[text]
+for k in (0..a_cols).step_by(4) {
+}
+\end{codebox}
+\label{idx:idx_03f6e342}
+这当然是因为现在每次迭代处理的是四个值，而不是一个。
+接下来，我们必须从内存中加载这两个向量：
+\begin{codebox}[rust]
+let a_vec = f32x4::from_slice(&a[i][p..p+4]);
+let b_vec = f32x4::from_array(unsafe {
+    [
+        *b.get_unchecked(p + 0).get_unchecked(j),
+        *b.get_unchecked(p + 1).get_unchecked(j),
+        *b.get_unchecked(p + 2).get_unchecked(j),
+        *b.get_unchecked(p + 3).get_unchecked(j),
+    ]
+});
+\end{codebox}
+对于 \texttt{a\_vec}，我们知道加载的是内存中连续的值，所以直接从切片加载是最简单也最快的。这会在切片的两端各产生一次边界检查，相对于加载的数据量来说，这个开销应该很小。不过，如果我们愿意，也可以用 \texttt{unsafe}块来设法避免它。
+如前所述，加载 \texttt{b\_vec} 要棘手一些。我们首先构造一个包含待加载值的四元素数组，然后把它加载进 SIMD 数据结构。这里我选择使用 \texttt{unsafe} 操作来省去边界检查，因为这样做相对简单，而且我们之前的测试表明，这么做带来的收益相当可观。
+把数据放进 SIMD 结构之后，实际的数学运算就很直接了，底层的复杂性由库隐藏起来：
+\begin{codebox}[text]
+sum += a_vec * b_vec;
+\end{codebox}
+至此内层循环就完成了，但我们还得把和存储到目标矩阵中恰当的位置：
+\begin{codebox}[rust]
+sum += simd_swizzle!(sum, [1, 0, 3, 2]);
+sum += simd_swizzle!(sum, [2, 2, 0, 0]);
+unsafe {
+    *out.get_unchecked_mut(i).get_unchecked_mut(j) = sum[0];
+}
+\end{codebox}
+\label{idx:idx_81b2e5c1}
+头两行看起来像变魔术，但实际上相当直接。这个
+\texttt{simd\_\allowbreak{}swizzle!} 宏会改变 SIMD 向量中元素的顺序。这种操作，
+称为 \texttt{swizzle}，在 SIMD 代码中极为常见。作为第二个参数传入的数组，是一个描述我们希望如何构造结果向量的索引数组。
+如果我们把 \texttt{sum} 向量看作有四个元素 \texttt{x, y, z, w}，分别对应索引 0 到 3，那么可以看到，我们用 \texttt{simd\_\allowbreak{}swizzle!} 构造出来的向量是 \texttt{y, x,}
+\texttt{w, z}。当我们把这个向量加到原向量上时，就得到 \texttt{x + y,\allowbreak{} y + x,\allowbreak{} z + w,\allowbreak{} w + z}。
+再来一轮这样的操作，会把 \texttt{w, w, x, x} 加到我们的和上，使得结果向量的每个元素都等于 \texttt{x + y + z + w}。然后我们可以任选其中一个元素，写到 \texttt{out} 矩阵中正确的位置。为简单起见，这里我们选择 \texttt{sum[0]}。
+这样我们就得到了乘法 SIMD 实现的第一版。现在，我们跑一些基准测试，看看它与其他尝试相比如何。我们已经把项目设置成：在使用 \texttt{nightly} 特性时调用 SIMD 版乘法，因此对我们的改进做基准测试只需像这样：
+\begin{codeboxdark}
+$ cargo +nightly bench --features nightly
+\end{codeboxdark}
+在我的机器上，结果显示，尽管加载 \texttt{b\_vec} 带来了低效，性能仍有进一步的提升：
+\begin{codeboxdark}
+multiply 100x100         time:   [207.73 µs 208.60 µs 210.07 µs]
+                         change: [−41.677% −41.465% −41.251%] (p = 0.00 < 0.05)
+                         Performance has improved.
+\end{codeboxdark}
+SIMD 给我们带来了大幅提速，同时也留下了若干可能的改进方向。我们可以转置 \texttt{b} 矩阵，可以进一步研究如何消除边界检查，也可以尝试下沉到 \texttt{std::arch} 去做更精细的手工调优。此外，我们的实现还有一些局限，它假定所有矩阵的尺寸都是 4 的倍数。
+\label{idx:idx_faa87e88}
+尽管仍有很大的改进空间，我们已经看到 SIMD 是 CPU 上计算任务的黄金标准，而 \texttt{std::simd} 提供了一套易于上手的 API 来释放它的能力。当这套 API 稳定之后，Rust 在编写高性能程序方面将成为一个更强大的竞争者。
+\section{小结}
+在本章中，我们考察了影响 Rust 代码的一些独特性能问题。接着我们构建了一个示例程序，并学会了如何测量它的性能。利用这些信息，我们设法为代码带来了若干提速，最终相比最初的实现有了显著的提升。
+在下一章中，我们将了解另一种提升程序性能的方法：\textbf{多线程}。
+\needspace{26\baselineskip}
+\begin{samepage}
+\subsection{获取本书的 PDF 版本及更多内容}
+扫描二维码（或访问 \texttt{packtpub.\allowbreak{}com/\allowbreak{}unlock}）。按书名搜索本书，确认版本，然后按照页面上的步骤操作。
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\emph{注意：请把发票放在手边。直接从 Packt 购买的订单无需发票。}
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\end{samepage}

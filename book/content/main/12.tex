@@ -1,0 +1,798 @@
+\label{idx:idx_c5022777}
+\textbf{元编程}（metaprogramming）是指编写能够生成或操作其他代码的代码。在许多编程语言中，元编程能力都依赖某种宏展开系统。宏是许多编程语言中的强大工具，其中包括 C++——在 C++ 里，宏作为一种系统，通过文本的展开与替换来生成代码。
+\label{idx:idx_f83e6cf8}
+\label{idx:idx_37fe4465}
+Rust 的宏系统与 C++ 有着根本性的不同，它赋予了程序员大量额外的能力。事实上，Rust 的宏系统涵盖好几种不同类型的宏，可分为\textbf{声明式宏}（declarative macro）与\textbf{过程宏}（procedural macro）两大类。本章将考察 C++ 与 Rust 宏系统之间的差异，并给出若干示例，展示如何使用 Rust 的宏系统来改进我们的程序。
+在本章中，我们将涵盖以下主要主题：
+\begin{itemize}
+  \item 预处理器的陷阱
+  \item 声明式宏
+  \item 过程宏
+  \item 宏的最佳实践
+\end{itemize}
+\section{技术要求}
+本章的示例使用 Rust 1.\allowbreak{}82.\allowbreak{}0，但它们也能在任何更新的版本上运行。
+如果你在安装 Rust 时需要帮助，请参阅\emph{附录}。
+你可以在本书的 GitHub 仓库中找到本章的代码文件：\href{https://}{\texttt{https://}}
+\texttt{github.\allowbreak{}com/\allowbreak{}PacktPublishing/\allowbreak{}Rust-\allowbreak{}for-\allowbreak{}CPP-\allowbreak{}Developers}。
+\section{预处理器的陷阱}
+\label{idx:idx_def9a534}
+虽然本书讲的是 Rust 而非 C++，但看看 C++ 预处理器的常见问题，有助于更好地理解 Rust 对其宏系统所采取的做法。本节我们将指出 C++ 做法中的一些常见问题，并观察 Rust 是如何处理它们的。
+\subsection{语法脆弱性}
+\label{idx:idx_650811c0}
+\label{idx:idx_31f7287c}
+C++ 的宏系统继承自 C，它的全部工作都在一个完全独立的阶段中完成，这个阶段称为\textbf{预处理器}（preprocessor）。预处理器把宏替换当作一个纯文本过程来执行。它假定运行在其输出之上的编译器会捕获转换过程中产生的任何错误。这种系统带来的一个后果是：当编译器看到展开后的文本时，关于这些宏的上下文信息已经丢失，编译器无法区分哪些代码是生成的、哪些是手写的。
+诚然，C++ 的宏系统暴露了一些强大的元编程能力，在 C 和 C++ 的历史上被卓有成效地使用过。但它也有一些微妙的问题，程序员必须了解它们才能有效地使用宏。一个经典的例子是下面这个宏，当它作为 \texttt{if} 语句的一部分展开时，可能产生意料之外的行为：
+\begin{codebox}[text]
+#define PRINT_TWICE \
+    printf("Hello World\n"); \
+    printf("Hello World\n");
+if( condition )
+    PRINT_TWICE;
+\end{codebox}
+当 \texttt{condition} 为 \texttt{false} 时，这会打印一份 \texttt{"Hello World\textbackslash{}n"}，因为编译器只把宏中的第一条语句视为 \texttt{if} 语句的一部分，而第二条语句会被无条件执行。在这种情况下，宏的作者很可能并不打算以这种方式使用这个宏。但由于宏系统只是简单的文本替换，编译器无法理解、也无法就此处程序员的错误给出警告。
+\label{idx:idx_d126c1db}
+简单的文本替换在其他方面也表现出脆弱性。值得注意的是，我们完全无法指定或限制传入宏的参数。由于编译器或预处理器没有对每个宏接受何种表达式作为合法输入施加任何约定，当宏的作者与使用者理解不一致时，就很容易产生意料之外的行为。例如，设想这样一个把值翻倍的简单宏：
+\begin{codebox}[text]
+#define DOUBLE(x) x * 2
+\end{codebox}
+当传入的是单个标识符时，它工作得很好，但如果传入的是一个表达式，我们就可能得到意想不到的行为：
+\begin{codebox}[rust]
+int main() {
+   int x = 0;
+   int y = 1;
+   std::cout << DOUBLE(x) << std::endl;
+   std::cout << DOUBLE(y + x) << std::endl;
+}
+\end{codebox}
+宏的使用者可能会合理地期望这个程序第一行打印 \texttt{0}、第二行打印 \texttt{2}，但实际上第二个表达式打印的是 \texttt{1}。
+原因在于，这个宏展开成了 \texttt{y + x * 2}，把变量的值代进去就是 \texttt{1 + 0 * 2}。由于运算符优先级，乘法会先于加法求值。
+这些问题在 C 和 C++ 中尽人皆知，多年来人们已经造出了好几种变通方案。对于我们的 \texttt{DOUBLE} 宏，正确的变通方案是用括号确保表达式按我们期望的顺序求值：
+\begin{codebox}[text]
+#define DOUBLE(x) ((x) * 2)
+\end{codebox}
+\label{idx:idx_8268640e}
+另一种常见技巧是把宏的内容包在一个 \texttt{do}/\texttt{while} 语句里。这能有效防止单行 \texttt{if}、\texttt{while} 和
+\texttt{for} 语句的语义带来任何语法上的意外。把它应用到前面那个 \texttt{PRINT\_\allowbreak{}TWICE} 宏上，我们会得到类似这样的东西：
+\begin{codebox}[text]
+#define PRINT_TWICE \
+    do { \
+        printf("Hello World\n"); \
+        printf("Hello World\n"); \
+    } while (0)
+\end{codebox}
+这类变通方案通常能解决最明显、最棘手的问题，但归根结底，C++ 宏必须极其小心地编写，才能确保它们不会以语法脆弱的方式被使用、从而产生意料之外的行为。Rust 的宏系统处理语法脆弱性问题主要有两种方式。第一，宏展开直接发生在编译器中，而不是在一个独立的预处理阶段，这让编译器在展开宏时能够推断宏的作用域与上下文。第二，它明确规定了宏的每个输入允许哪些种类的语言构造。例如，宏能够区分标识符、表达式和类型，并可以为每一种定义不同的行为。
+宏系统的历史比 C 和 C++ 还要早，其中许多都有另一个问题，这个问题多年来困扰了足够多的人，以至于它有了自己的专门术语。
+\subsection{变量捕获}
+\label{idx:idx_669e7023}
+\label{idx:idx_be34182e}
+\label{idx:idx_f9ec5565}
+自 20 世纪 80 年代以来，编程语言理论中就用\emph{卫生性}（hygiene）一词来描述宏系统如何防止\textbf{变量捕获}问题。要理解变量捕获，我们可以从两个不同的位置来考虑宏：\textbf{定义位置}（definition site），即宏被定义的地方；以及\textbf{调用位置}（invocation site），即宏被使用或展开的地方。变量捕获指的是：调用位置作用域中存在的某个变量，被宏展开无意中读取、写入或遮蔽（shadow）。
+如果宏系统对变量捕获没有任何限制或保护措施，就被认为是\emph{不卫生的}。纯粹基于文本的宏求值与展开策略，比如 C++ 所采用的那一套，本质上就是不卫生的。一个简单的例子是让全局计数器自增的宏：
+\begin{codebox}[text]
+int x = 0;
+#define INC_GLOBAL_X() x += 1
+\end{codebox}
+这个宏可能一直工作正常，直到有人在某个作用域里恰好用到了它，而这个作用域中定义了自己的 \texttt{x}：
+\begin{codebox}[text]
+int x = 0;
+#define INC_GLOBAL_X() x += 1
+int main() {
+    int x = 1;
+    INC_GLOBAL_X();
+}
+\end{codebox}
+在这种情况下，被自增的是局部的 \texttt{x}，而不是全局的那个。虽然这个例子是刻意构造的，但在使用 C++ 宏时，这个问题会在出人意料的地方冒出来。应对它的一种常见做法是：设法创建不太可能与其他任何东西冲突的符号名。相应地，在大量使用 C++ 宏的部署中，自定义一个 \texttt{ANON()} 或 \texttt{UNIQUE\_\allowbreak{}ID(\allowbreak{})\allowbreak{}} 宏就能解决问题。这类宏会尝试为宏内部的使用创建一个唯一的符号名，通常借助词法单元拼接（token pasting），把某个标识符名与 \texttt{\_\allowbreak{}\_\allowbreak{}LINE\_\allowbreak{}\_\allowbreak{}} 或非标准的 \texttt{\_\allowbreak{}\_\allowbreak{}COUNTER\_\allowbreak{}\_\allowbreak{}} 宏的值组合在一起。虽然并无保证，但这个新符号名与代码库中其他东西冲突的可能性要小得多。
+\label{idx:idx_a552a6b5}
+\label{idx:idx_239ccc0a}
+虽然为预处理器的局限性准备变通办法是件好事，但更好的做法是提供更安全的默认行为。\emph{卫生的}宏系统通过围绕定义位置（definition site）和调用位置（invocation site）的变量如何被使用来制定规则和保护措施，从而实现这一点，防止无意的变量捕获。不同卫生系统的策略和严格程度各不相同。就我们的讨论而言，我们只关心 Rust 所选择的策略，它被称为\textbf{混合位置卫生性}。
+混合位置卫生性精确规定了哪些类型的标识符在定义位置解析、哪些在调用位置解析。在 Rust 的策略中，局部变量以及循环和块的标签都在定义位置查找，而所有其他标识符则在调用位置查找。这就形成了一套可预测、且始终适用的规则，无论宏是如何定义或使用的。
+Rust 的这一策略与这门语言对可预测性和安全性的重视十分契合，但要学会使用它，就得掌握这些规则。在下一节中，我们将一边构建一个属于自己的小型宏，一边考察如何创建和使用声明式宏。
+\section{声明式宏}
+\label{idx:idx_d781c718}
+Rust 提供两类宏，其中第一类、也是最简单的一类是\textbf{声明式宏}。在 Rust 文档中，声明式宏有时也被称为“\emph{示例宏}”（Macros by example）。虽然 C++ 宏的许多能力都可以用 Rust 的声明式宏来实现，但本着 Rust 的设计目标，它们更安全、更卫生，也更具表现力。
+\label{idx:idx_ed443b38}
+本节中，我们将通过一个实际的例子来学习如何定义和使用声明式宏。随后，我们还会探讨这类宏的一些奇特之处和最佳实践。
+\subsection{在 Rust 中创建声明式宏}
+\label{idx:idx_aeefef60}
+\label{idx:idx_e0109fa8}
+Rust 在标识符之后使用 \texttt{!} 符号来表示宏调用。在前面的章节中，我们已经多次遇到这一语法，事实上，由于常见的操作，例如
+\texttt{println!} 和 \texttt{vec!}，是由标准库以宏的形式实现的，它确实是 Rust 程序员最早接触到的语法之一。为了深入探究
+Rust 的声明式宏系统是如何工作的，本节我们会创建属于我们自己的 \texttt{vec!} 宏版本。我们会把自己版本的宏命名为 \texttt{v!}，并用它来演示声明式宏的语法、匹配规则和展开行为。
+\subsubsection{创建我们的第一个宏}
+\label{idx:idx_912ddeae}
+回想一下，我们想要复刻的 \texttt{vec!} 宏会创建一个已初始化的 \texttt{Vec}。先从 \texttt{v!} 宏的一个非常简单的版本入手。我们干脆定义一个不接受任何参数、只生成一个新的空 \texttt{Vec} 的宏：
+\begin{codebox}[rust]
+macro_rules! v {
+  () => { Vec::new() };
+}
+fn main() {
+  let v: Vec<u32> = v![];
+  println!("{:?}", v);
+}
+\end{codebox}
+可以看到，宏声明以 \texttt{macro\_\allowbreak{}rules!} 关键字开头。Rust 宏的三个组成部分都包含在这个块里。第一部分是与宏名相匹配的标识符。其后是一组\textbf{规则}，每条规则左侧是一个\textbf{匹配器}，右侧是一个\textbf{转写器}。当编译器遇到诸如 \texttt{v![]} 这样的宏调用时，它会自上而下遍历宏的规则，并选择第一条与所传参数匹配的规则。随后调用转写器，把宏展开成最终形式。
+\label{idx:idx_fdd732ef}
+在这个例子中，我们的匹配器只匹配空的参数列表，而转写器会展开为 \texttt{Vec::new()}，从而产生一个空的向量。如果我们试着传入一个参数，比如 \texttt{v![0]}，会发生什么？Rust 编译器无法在我们这组规则中匹配到任何东西，于是报告 \texttt{error: no rules expected '0'}。要让这个宏变得有用，我们还需要添加更多规则。下面来扩展这个宏，让它允许传入一个初始值，从而创建一个只含单个元素的向量：
+\begin{codebox}[rust]
+macro_rules! v {
+  () => { Vec::new() };
+  ($x:expr) => { Vec::from([$x]) };
+}
+fn main() {
+  let v: Vec<u32> = v![0];
+  println!{"{:?}", v};
+}
+\end{codebox}
+\label{idx:idx_69aff7bd}
+每条规则的匹配器部分都有自己的一小套语法。这里，\texttt{\$x:expr} 这一语法用于捕获一个可在转写器中使用的\textbf{语法片段}（syntax fragment）。这个语法片段由用冒号分隔的两部分组成：\texttt{\$x}\emph{元变量}持有被捕获的语法片段，而\emph{片段说明符}则指明哪些种类的语法片段匹配这条规则。允许使用的片段说明符有若干种，其中较常见的几个是：用 \texttt{expr} 捕获一个表达式，用
+\texttt{block} 捕获一系列语句，用 \texttt{ty} 表示一个类型名。完整的片段
+说明符列表可在 Rust 文档中查到。
+在这条规则中，我们在转写器里使用了 \texttt{Vec::from}，在栈上创建一个数组，再传给 \texttt{Vec}。发生这种情况时，\texttt{Vec::from} 会在堆上创建该数组的一份拷贝。这显然低效，也不是标准 \texttt{vec!} 宏的行为方式，但它能让我们在产出可运行代码的同时，演示我们所需的那些宏行为。
+\subsubsection{用重复来扩展我们的能力}
+\label{idx:idx_7c3ca546}
+\label{idx:idx_0eb5d586}
+至此必须指出，一个只允许我们用零个或一个元素来初始化 \texttt{Vec} 的宏，仍然非常受限。下面来修改规则，让它们能接受任意数量的参数。为此，我们必须使用\textbf{重复}（repetition）。重复是一种同时用于匹配器和转写器的特殊语法，分别让我们捕获和展开多个参数。
+\label{idx:idx_b3729cef}
+重复借助\textbf{重复运算符}（repetition operator）来指定匹配器和转写器所接受的参数的确切数量。重复所用的运算符与许多正则表达式库中的类似：\texttt{*} 表示零个或多个参数，\texttt{+}表示一个或多个参数，\texttt{?} 表示零个或一个参数。要重复的词法单元和元变量匹配被放在 \texttt{\$(...)} 内，后面跟一个可选的、指定参数分隔符（比如逗号）的词法单元，再之后是某个重复运算符。
+综合起来看，我们希望宏能接受任意数量的参数，例如 \texttt{v![0,}
+\texttt{1, 2]} 或 \texttt{v![\allowbreak{}0,\allowbreak{} 1,\allowbreak{} 2,\allowbreak{} 3,\allowbreak{} 4]\allowbreak{}}。在匹配器一侧，我们最终写出 \texttt{\$(\allowbreak{}\$x:expr)\allowbreak{},\allowbreak{}+}，从而得到一条
+匹配一个或多个以逗号分隔的表达式的规则。在讨论转写器一侧之前，先把它放进我们的宏里：
+\begin{codebox}[rust]
+macro_rules! v {
+  () => { Vec::new() };
+  ($($x:expr),+) => { Vec::from([$($x),+]) };
+}
+fn main() {
+  let v: Vec<u32> = v![0];
+  println! {"{:?}", v};
+  let v: Vec<u32> = v![0, 1, 2, 3];
+  println!("{:?}", v);
+}
+\end{codebox}
+运行它时，我们会看到预期的输出：
+\begin{codeboxdark}
+[0]
+[0, 1, 2, 3]
+\end{codeboxdark}
+我们的宏现在可以接受任意数量的参数，而且可以看到，转写器语法与匹配器语法几乎完全相同。也就是说，我们把希望展开的词法单元和元变量放在一个 \texttt{\$(...)} 表达式内，后面跟一个分隔符和一个重复运算符。
+\label{idx:idx_2f0af0d3}
+使用重复时，转写器中展开的参数数量必须与匹配器捕获的数量完全一致。通常都是如此，除非我们试图把规则匹配器一侧不同的重复混在一起。例如，某些语言中有一个称为 \texttt{zip} 的操作，可以把两个元组组合起来，比如从 \texttt{(\allowbreak{}(\allowbreak{}0,\allowbreak{} 1,\allowbreak{} 2)\allowbreak{},\allowbreak{} (\allowbreak{}3,\allowbreak{} 4,\allowbreak{} 5)\allowbreak{})\allowbreak{}} 变成 \texttt{(\allowbreak{}(\allowbreak{}0,\allowbreak{}3)\allowbreak{},\allowbreak{} (\allowbreak{}1,\allowbreak{} 4)\allowbreak{},\allowbreak{} (\allowbreak{}2,\allowbreak{} 5)\allowbreak{})\allowbreak{}}。写成宏形式，它可能长这样：
+\begin{codebox}[rust]
+macro_rules! zip {
+    (($($l:expr),*), ($($r:expr),*)) => {
+        ($( ($l,$r) ),*)
+    };
+}
+fn main() {
+    let out = zip!((0, 1, 2), (3, 4, 5));
+    println!("{:?}", out);
+}
+\end{codebox}
+这个宏看起来很唬人，但拆开来看，它匹配的是两组元组，
+即 \texttt{\$l} 和 \texttt{\$r}，长度任意，以逗号分隔。然后在转写器中，我们把这些
+两个元组合并成一个，把它们的元素拉链式地配对（zip）。
+\label{idx:idx_3955ed8f}
+我们的例子按编译结果正常工作，如预期般打印出 \texttt{(\allowbreak{}(\allowbreak{}0,\allowbreak{}3)\allowbreak{},\allowbreak{} (\allowbreak{}1,\allowbreak{}4)\allowbreak{},\allowbreak{} (\allowbreak{}2,\allowbreak{}5)\allowbreak{})\allowbreak{}}。然而，如果两个输入序列长度不同，比如 \texttt{zip!(\allowbreak{}(\allowbreak{}0,\allowbreak{} 1,\allowbreak{} 2)\allowbreak{},\allowbreak{} (\allowbreak{}3,\allowbreak{} 4)\allowbreak{})\allowbreak{}}，编译器就不会允许我们展开这个宏，并给出这样的提示：
+\begin{codeboxdark}
+error: meta-variable `l` repeats 3 times, but `r` repeats 2 times
+\end{codeboxdark}
+重复语法可能不太易读，但一旦掌握，它就是一个强大的特性。不过，我们的示例 \texttt{v![]} 宏还没完全做完。
+\subsubsection{匹配显式词法单元}
+\label{idx:idx_4b4584dd}
+我们的 \texttt{v![]} 宏现在运行良好，但我们还漏掉了对应的 \texttt{vec![]} 宏所接受的另一种语法。数组可以用一个默认值加上以分号分隔的元素个数来初始化。利用我们已经掌握的知识，添加这一行为应该不会太难，所以现在就补全我们的 \texttt{v![]} 宏：
+\begin{codebox}[rust]
+macro_rules! v {
+  () => { Vec::new() };
+  ($val:expr; $count:expr) =>
+    { Vec::from_iter(std::iter::repeat_n($val, $count)) };
+  ($($x:expr),+) => { Vec::from([$($x),+]) };
+}
+fn main() {
+  let v = v![0u32; 5];
+  println!("{:?}", v);
+}
+\end{codebox}
+这个例子中唯一对我们而言的新东西，是匹配器里作为字面量词法单元的分号。在宏里，我们可以自由地混用诸如 \texttt{\$val:expr} 这样的元变量和诸如 \texttt{;} 这样的字面量词法单元，但
+\texttt{\$} 词法单元是宏语言明确保留的，无法转义。
+\label{idx:idx_29426b12}
+作为一点小小的优化，我们使用 \texttt{Vec::\allowbreak{}from\_\allowbreak{}iter} 函数来构造向量。这确保我们不会为了构造那个将要转换成向量的数组而浪费大量栈空间。使用 \texttt{Vec::from} 时我们并不操心这一点，但这里的变通做法很直接。可以猜到，该程序的输出是 \texttt{[\allowbreak{}0,\allowbreak{} 0,\allowbreak{} 0,\allowbreak{} 0,\allowbreak{} 0]\allowbreak{}}，这意味着我们的示例 \texttt{v![]} 宏现在功能完备了！
+至此，我们已经讲完了声明式宏的基础，并在这个过程中创建了自己版本的 \texttt{vec!}。接下来，我们会更深入地探讨一些与创建能出色完成工作的声明式宏相关的实践考量。
+\subsection{声明式宏的实践考量}
+\label{idx:idx_5f10baf5}
+虽然 Rust 的声明式宏通常比严格的文本替换系统安全得多，但它们也有一些细微之处和最佳实践，无论是编写宏还是使用宏时，理解它们都会有所帮助。
+\subsubsection{选择分隔符}
+\label{idx:idx_3c7ab202}
+\label{idx:idx_ed95fe7d}
+\textbf{分隔符}（delimiter）——即用来表示宏参数的那对词法单元——这个话题可能是声明式宏中一个容易让人困惑的方面。Rust 宏语言允许三对不同的分隔符。圆括号最常用于表示函数调用的宏，例如
+\texttt{println!()}。我们也见过，方括号可用于那些行为
+有点像数组的宏，比如 \texttt{vec![]} 或我们前面那个 \texttt{v![]} 宏。第三类分隔符是花括号，当宏参数表示一个代码块或一系列语句时，常常使用它们。
+在大多数情况下，这些分隔符是可以互换的。例如，这个 \texttt{"Hello}
+\texttt{World"} 的小改动可以顺利编译并运行：
+\begin{codebox}[rust]
+fn main() {
+    println!("Hello World, parentheses");
+    println!["Hello World, brackets"];
+    println! {"Hello World, braces"};
+}
+\end{codebox}
+为了清晰和一致，大多数 Rust 程序员会选用与宏用途最相称的分隔符：类函数的宏用圆括号，类代码块的宏用花括号，类数组的宏用方括号。
+\label{idx:idx_91205f26}
+在定义宏规则时，我们也可以使用任意组合的分隔符。例如，下面这些例子都是合法且等价的：
+\begin{codebox}[text]
+macro_rules! nil {
+  () => ( () );
+}
+macro_rules! nil (
+  [] => [ () ];
+);
+macro_rules! nil [
+  {} => { () };
+];
+\end{codebox}
+注意，用 \texttt{()} 或 \texttt{[]} 定义宏规则时，必须在它们后面跟一个分号。虽然在这些情形下，语言允许使用三套分隔符中的任意一套，但在实践中，我们在真实代码里见到的几乎所有宏都会用花括号 \texttt{\{\}} 来定义宏规则，用圆括号 \texttt{()} 来定义匹配器和转写器。
+\subsubsection{混合位置卫生性的影响}
+\label{idx:idx_0e135f1e}
+如前所述，Rust 的宏卫生性策略通过在定义位置查找并解析符号，防止局部变量以及循环或块标签被捕获。这样做意在拦住最严重的变量捕获问题，但仍有可能让我们意外地引用到某些东西。下面来看一个实际的例子：
+\begin{codebox}[rust]
+macro_rules! double_x {
+    () => {
+        x *= 2
+    };
+}
+fn main() {
+    let mut x = 1;
+    double_x!();
+    println!("{:?}", x);
+}
+\end{codebox}
+匆匆一瞥这段代码，可能会让我们以为它会打印 \texttt{2}，就像在纯文本的 C++ 预处理器展开中那样。然而，编译器却报告了一个错误：
+\begin{codeboxdark}
+error[E0425]: cannot find value `x` in this scope
+\end{codeboxdark}
+Rust 宏所遵循的混合位置卫生性规则规定：\texttt{x} 必须在定义位置的作用域内，而不是调用位置。那换成函数试试会怎样？
+\begin{codebox}[rust]
+macro_rules! double_x {
+    ($x:ident) => {
+        $x = double($x)
+    };
+}
+fn double(x: i32) -> i32 {
+    return x * 2;
+}
+fn main() {
+    let mut x = 1;
+    double_x!(x);
+    println!("{:?}", x);
+}
+\end{codebox}
+这里的结果就大不相同了。我们确实得到了预期的 \texttt{2} 输出，因为函数名是在调用位置而非定义位置查找的。这让宏可以安全地访问它们。
+\label{idx:idx_f0c40cd1}
+在处理函数、结构体、trait 或全局常量时，这种行为会引发与 C++ 预处理器类似的问题。Rust 中的解决办法是对我们必须在宏内部使用的标识符名进行完全限定（fully qualify）。这能确保最大的健壮性，尤其是在我们的宏会作为 crate 公开接口的一部分对外发布时。
+我们可以按如下方式调整前面那个 \texttt{v!} 宏，使其符合这一建议：
+\begin{codebox}[rust]
+macro_rules! v {
+  () => { ::std::vec::Vec::new() };
+  ($val:expr; $count:expr) =>
+    { Vec::from_iter(::std::iter::repeat_n($val, $count)) };
+  ($($x:expr),+) => { ::std::vec::Vec::from([$($x),+]) };
+}
+\end{codebox}
+声明式宏还提供了特殊的 \texttt{\$crate} 元变量。在转写器中，它会解析为当前 crate，这样 crate 内部的标识符也可以被完全限定。要记住的一个关键点是：由于查找只在调用时进行，除非编译器真的展开某条规则，否则我们无法测试这条规则的正确性。换句话说，如果我们把某个类型的完全限定名拼错了，除非恰好遇到一次匹配到那条错误规则的宏使用，否则编译器不会发现。强烈建议花些时间编写与每条规则相匹配的单元测试，以避免这个问题。
+\label{idx:idx_f999fafb}
+既然我们已经很好地掌握了如何创建声明式宏，也对其编写和维护的最佳实践有所了解，现在该来探索 Rust 提供的第二类宏——过程宏了。
+\section{过程宏}
+\label{idx:idx_0003805b}
+Rust 中的\textbf{过程宏}（procedural macro）带来了极其强大的代码生成能力，代价是开发复杂度比声明式宏高得多。这些宏是 crate 生态中一些最强大、最引人注目的特性的核心。这包括使用 \texttt{serde\_\allowbreak{}derive} 等 crate 实现的人性化序列化，以及使用 \texttt{clap}、\texttt{argp} 等 crate 实现的直观命令行解析。
+本节中，我们将探索 Rust 提供的不同类型的过程宏，并为每一种构建一个简短的示例。
+\subsection{过程宏的共同属性}
+\label{idx:idx_e66baaeb}
+Rust 目前支持三种不同的过程宏：自定义 derive（custom derive）、自定义属性（custom attribute）和类函数的过程宏（function-\allowbreak{}like procedural macro）。我们会按照程序员最可能遇到它们的顺序来考察这三种过程宏。但首先，我们先来看看这三者共有的属性。
+过程宏最显著的特征之一是：每个过程宏都必须位于自己的 crate 中。过程宏 crate 会被编译成由编译器加载的动态库。这使编译器能够在其他编译阶段中调用它们。把 crate 的 \texttt{Cargo.toml} 文件中 \texttt{[lib]} 小节的 \texttt{proc-macro} 设为 \texttt{true}，即可将该 crate 指定为过程宏 crate。
+每个过程宏 crate 必须至少导出一个公开函数，并用一个属性来标记它所要实现的是三种过程宏中的哪一种。单个过程宏 crate 可以导出多个函数，但所有导出的函数都必须用其中一个过程宏属性来标记。
+所有过程宏函数都既能操作、也能产生 \emph{词法单元流}（token stream），其类型为
+\texttt{proc\_\allowbreak{}macro::\allowbreak{}TokenStream}。\texttt{proc\_macro} crate 由编译器提供，并且
+\label{idx:idx_9388baa5}
+无需在 \texttt{Cargo.toml} 中列出，但只能在过程宏 crate 中使用或引用它。由于过程宏直接使用词法单元流，它们运行的抽象层级非常低。通常只有编译器才会在这一抽象层级上操作。幸运的是，我们不必像编译器那样手动把词法单元流解析成抽象语法树。常用的 \texttt{syn} 和 \texttt{quote} crate 就是为了帮助我们对词法单元流进行解析和生成而存在的。
+现在我们动手创建第一个过程宏 crate。我们将使用 Rust 中所有宏里最强大的类型之一：自定义 derive。
+\subsection{自定义 derive}
+\label{idx:idx_4ffda6bd}
+本书通篇都在使用 \texttt{\#[derive]} 属性。其中一些是由编译器为 \texttt{Debug}、\texttt{Copy}、\texttt{Clone} 等标准 trait 实现的，而过程宏系统则把 derive 功能开放给了 crate 生态。就其核心而言，\texttt{\#[derive]} 旨在自动生成用于扩展类型行为的实现。最能体现这一能力的是 Rust 的旗舰序列化 crate \texttt{serde}，以及与之配套的自定义 derive 宏 crate \texttt{serde\_\allowbreak{}derive}。
+为了自己动手探索自定义 derive，我们来写一个简单的结构体美化打印器（pretty-\allowbreak{}printer）。通常我们会用 \texttt{Debug} 来做这件事，但实现我们自己的 derive 会是一个绝佳的 \texttt{"Hello}
+\texttt{World"} 示例，用于演示过程宏。我们先新建一个 crate 来存放我们的宏：
+\begin{codeboxdark}
+$ cargo new --lib prettyprint_derive
+$ cd prettyprint_derive
+$ cargo add syn quote
+\end{codeboxdark}
+自定义 derive crate 通常约定使用 \texttt{\_derive} 后缀，但编译器并不强制要求这样做。
+此时，我们必须编辑 \texttt{Cargo.toml}，告诉编译器这是一个过程宏 crate。我们要打开该文件并添加下面这个小节：
+\begin{codeboxdark}
+[lib]
+proc-macro = true
+\end{codeboxdark}
+\label{idx:idx_7dc4cd9c}
+现在打开 \texttt{src/lib.rs}，添加我们过程宏的骨架：
+\begin{codebox}[rust]
+use proc_macro::TokenStream;
+#[proc_macro_derive(PrettyPrint)]
+pub fn pretty_print_derive(input: TokenStream) -> TokenStream {
+  todo!()
+}
+\end{codebox}
+\texttt{\#[\allowbreak{}proc\_\allowbreak{}macro\_\allowbreak{}derive(\allowbreak{}PrettyPrint)\allowbreak{}]\allowbreak{}} 属性告诉编译器，我们正在定义一个过程宏函数，一旦它被导入，就可以配合 \texttt{\#[\allowbreak{}derive(\allowbreak{}PrettyPrint)\allowbreak{}]\allowbreak{}} 使用。传给这个属性的标识符通常对应一个 trait 名，但并不要求如此。为了让示例简单一点，我们不为它定义 \texttt{PrettyPrint} trait。此时，这个宏 crate 可以构建了，但我们的宏还没有提供任何有用的功能。要开始添加功能，我们需要在导入中加入 \texttt{syn} crate，并解析输入的词法单元：
+\begin{codebox}[rust]
+use proc_macro::TokenStream;
+use syn::{DeriveInput, parse_macro_input};
+#[proc_macro_derive(PrettyPrint)]
+pub fn pretty_print_derive(input: TokenStream) -> TokenStream {
+  let input = parse_macro_input!(input as DeriveInput);
+  todo!()
+}
+\end{codebox}
+\texttt{syn} crate 提供了 \texttt{parse\_\allowbreak{}macro\_\allowbreak{}input!} 宏，用于把输入的词法单元流解析成一个有用的结构。这里，我们要求它解析成一个 \texttt{syn::\allowbreak{}DeriveInput} 结构。理解传给这个宏时 \texttt{as} 关键字的用法很重要。虽然这个关键字通常用于简单类型之间的强制转换，但在这里，\texttt{parse\_\allowbreak{}macro\_\allowbreak{}input!} 的宏匹配规则期望用它来表示宏要返回的结构类型。
+\label{idx:idx_4b4060ca}
+回想一下，使用 \texttt{\#[derive]} 时，我们把它当作附着在结构体或枚举上的属性来用。\texttt{DeriveInput} 结构在大多数情况下会告诉我们实现宏所需的、关于被附着类型的全部信息。就我们的 \texttt{PrettyPrint} 宏而言，这包括结构体的名称，以及每个成员的名字和类型。
+为了开始生成输出的词法单元流，我们会使用 \texttt{quote} crate。一般来说，我们只需从该 crate 导入一样东西，即 \texttt{quote!} 宏。这个宏让我们能够以自然、易读的形式写出正在生成的 Rust 代码，同时仍然提供了一种创建
+作为过程宏返回值所必需的 \texttt{syn::\allowbreak{}TokenStream} 的方法。
+最后，让我们移除 \texttt{todo!()}，换成一个能生成一些初始代码的 \texttt{quote!} 块：
+\begin{codebox}[rust]
+use proc_macro::TokenStream;
+use quote::quote;
+use syn::{DeriveInput, parse_macro_input};
+#[proc_macro_derive(PrettyPrint)]
+pub fn pretty_print_derive(input: TokenStream)-> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name=&input.ident
+    let output = quote! {
+        impl #name {
+            pub fn pretty_print(&self) {
+            }
+        }
+    };
+    TokenStream::from(output)
+}
+\end{codebox}
+\label{idx:idx_d68a152f}
+可以看到，\texttt{quote!} 宏允许我们在生成的代码中使用处于局部作用域内的变量的值。这里，我们用 \texttt{\#name} 为传入的结构体创建了一个 \texttt{impl} 块。如果改为填充真正的 trait 定义，我们会写得接近 \texttt{impl PrettyPrint for \#name}。我们还生成了一个空函数，
+\texttt{pretty\_\allowbreak{}print}，它会出现在每一个使用我们自定义 derive 的结构体上，尽管我们
+尚未填充实现。
+现在是搭建第二个 crate 来测试我们过程宏的好时机。从现在起，我们可以在该 crate 中完成所有测试：
+\begin{codeboxdark}
+$ cd ..
+$ cargo new prettyprint_test
+$ cd prettyprint_test
+$ cargo add --path ../prettyprint_derive prettyprint_derive
+\end{codeboxdark}
+我们在该 crate 的 \texttt{src/main.rs} 中设置一个结构体，并调用它的 \texttt{pretty\_\allowbreak{}print(\allowbreak{})\allowbreak{}} 函数：
+\begin{codebox}[rust]
+use prettyprint_derive::PrettyPrint;
+#[derive(PrettyPrint)]
+struct TestStructure(u32, u32, u32);
+fn main() {
+    let x = TestStructure(0, 1, 2);
+    x.pretty_print();
+}
+\end{codebox}
+现在，我们用了一个简单的测试结构体来检验 \texttt{PrettyPrint} derive，但正如预期的那样，对这个 crate 运行 \texttt{cargo run} 时它还什么都打印不出来。让我们回到 \texttt{prettyprint\_\allowbreak{}derive} crate 里的 \texttt{quote!} 块，添加一些功能。我们最需要的是一种能遍历结构体成员、并为每个成员生成代码的方法。首先，我们需要开始深入研究 \texttt{DeriveInput}，从中提取出关于结构体的信息：
+\begin{codebox}[rust]
+let fields = match input.data {
+    syn::Data::Struct(data) => data.fields,
+    _ => unimplemented!(),
+};
+\end{codebox}
+\label{idx:idx_07194ab8}
+在这里，我们的过程宏只支持在 \texttt{struct} 类型上派生。
+\texttt{unimplemented(\allowbreak{})\allowbreak{}!} 宏会在用户试图对 \texttt{enum} 或 \texttt{union} 使用我们的宏时触发 panic
+类型。虽然这远达不到生产级质量，但对当前的示例来说已经够用。本章稍后我们会研究合适的错误处理方式。
+字段数据被包裹在另一个结构体中，因此我们需要用另一次模式匹配把它提取出来：
+\begin{codebox}[rust]
+let fields = match fields {
+    syn::Fields::Named(ref fields) => &fields.named,
+    syn::Fields::Unnamed(ref fields) => &fields.unnamed,
+    syn::Fields::Unit => &Default::default(),
+};
+\end{codebox}
+这里，\texttt{syn::\allowbreak{}Fields::\allowbreak{}Named} 保存的是带有具名成员的普通结构体的字段。类似地，\texttt{syn::\allowbreak{}Fields::\allowbreak{}Unnamed} 保存的是类元组结构体成员的信息，比如我们测试 crate 里用的那种。这些成员用 \texttt{.0}、\texttt{.1} 之类的名字来访问。最后，\texttt{syn::\allowbreak{}Fields::\allowbreak{}Unit} 表示空结构体，例如 \texttt{struct}
+\texttt{MyStruct()}。对于这种情况，我们只需返回一个空的默认值。
+\texttt{fields} 变量持有对一串以逗号分隔、可能为空的字段列表的引用。现在我们可以遍历这些字段，开始生成用于美化打印它们的代码：
+\begin{codebox}[rust]
+let field_prints = fields
+    .iter()
+    .enumerate()
+    .map(|(i, f)| {
+        if let Some(field_name) = f.ident.as_ref() {
+            quote! {
+                println!(" {}: {:?}", stringify!(#field_name), self.#field_name);
+            }
+        } else {
+            let index = syn::Index::from(i);
+            quote! {
+                println!(" .{}: {:?}", #index, self.#index);
+            }
+        }
+    })
+    .collect::<Vec<_>>();
+\end{codebox}
+\label{idx:idx_04102514}
+这里，我们逐一检查每个字段的标识符。如果它存在，我们就创建一个 \texttt{TokenStream}，打印出该字段的名字和值，并用内置的 \texttt{stringify!} 宏把标识符转换成字符串字面量。如果标识符是 \texttt{None}，那我们面对的就是一个未命名的元组字段，只需生成对该索引及其值的打印。随后，我们把所有这些生成的 token 流收集进 \texttt{Vec<\allowbreak{}TokenStream>\allowbreak{}}，为最后一步做准备：
+\begin{codebox}[rust]
+let output = quote! {
+    impl #name {
+        pub fn pretty_print(&self) {
+        #(#field_prints)*
+        }
+    }
+};
+TokenStream::from(output)
+\end{codebox}
+我们用 \texttt{quote!} 提供的 \texttt{\#(...)*} 语法来修正最终输出，按顺序输出向量中的每个元素。
+回到 \texttt{prettyprint\_\allowbreak{}test} crate，我们可以对它运行 \texttt{cargo run}，看看代码生成的实际效果：
+\begin{codeboxdark}
+ .0: 0
+ .1: 1
+ .2: 2
+\end{codeboxdark}
+\label{idx:idx_cfd38f88}
+现在我们有了一个可用的、自定义 derive 类型的过程宏，也成功用 \texttt{syn} 和 \texttt{quote} 两个 crate 完成了解析与 \texttt{TokenStream} 的生成。接下来在探索第二类过程宏时，我们会有更多机会练习使用这两个 crate。
+\subsection{类属性宏}
+\label{idx:idx_914c7221}
+\label{idx:idx_71645113}
+我们之前已经遇到过属性（attribute）。它们的形式是 \texttt{\#[\allowbreak{}identifier]\allowbreak{}}，放在它们要修饰的\emph{项}（item）正前方。实践中，项通常是一个函数、结构体或枚举，但属性也可以修饰语言的其他部分。Rust 中的许多属性内建于编译器，例如 \texttt{\#[test]}、\texttt{\#[inline]} 或 \texttt{\#[doc]}。不过，Rust 的过程宏基础设施让我们有机会在 crate 生态中提供自己的属性。
+类属性过程宏在结构上与自定义 derive 宏相似，但有两个重要区别。第一，过程宏函数接收两个输入
+\texttt{TokenStream} 参数。第二，宏执行时输出的 \texttt{TokenStream}\emph{会替换掉}输入 token，
+而不是像自定义 derive 宏那样新增 token。
+要使用类属性过程宏，我们必须像自定义 derive 宏那样新建一个 crate。这个 crate 必须在 \texttt{Cargo.toml} 文件中设置为 \texttt{proc-\allowbreak{}macro =\allowbreak{} true}，并且至少导出一个带有 \texttt{\#[\allowbreak{}proc\_\allowbreak{}macro\_\allowbreak{}attribute]\allowbreak{}} 属性的公共函数。
+现在就来搭建吧。作为示例，我们将构建一个小型的类属性宏，名叫
+\texttt{log\_call}，它可以应用到一个函数上，自动在每次调用的开始和
+结束时打印一条日志消息：
+\begin{codeboxdark}
+$ cargo new --lib log_call
+$ cd log_call
+$ cargo add quote
+$ cargo add syn --features full
+\end{codeboxdark}
+我们给 \texttt{syn} crate 添加了 \texttt{full} feature，因为后面要用的 \texttt{syn::ItemFn} 需要它。
+\label{idx:idx_e004a75f}
+\label{idx:idx_17f9af94}
+和之前一样，接下来我们必须在 \texttt{Cargo.toml} 中指明这是一个过程宏 crate：
+\begin{codeboxdark}
+[lib]
+proc-macro = true
+\end{codeboxdark}
+现在，让我们先勾勒出这个宏 crate 的开头部分：
+\begin{codebox}[rust]
+use proc_macro::TokenStream;
+#[proc_macro_attribute]
+pub fn log_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
+  item
+}
+\end{codebox}
+可以看到，这里与我们早先的自定义 derive 宏 crate 差别不大。如前所述，类属性宏有两个输入 token 流。第一个参数（我们把它命名为 \texttt{\_attr}）包含属性本身的 token，在我们的例子里以 \texttt{\#[\allowbreak{}log\_\allowbreak{}call]\allowbreak{}} 开头。这允许宏作者向宏传递额外的参数。例如，如果我们想支持 \texttt{\#[\allowbreak{}log\_\allowbreak{}call(\allowbreak{}verbose =\allowbreak{} True)\allowbreak{}]\allowbreak{}} 这样的参数，就会用第一个 \texttt{TokenStream} 来解析这些参数。由于本例中并不使用它，我们在前面加下划线，以避免编译器给出未使用变量的警告。
+第二个 \texttt{TokenStream} 参数（我们命名为 \texttt{item}）包含属性所附着的那一项的 token。在我们这个简单测试中，我们直接把它原样返回，使这个属性宏成为一个空操作。
+\label{idx:idx_ba0d99bd}
+\label{idx:idx_df35f129}
+为了正确实现 \texttt{\#[\allowbreak{}log\_\allowbreak{}call]\allowbreak{}} 属性，我们要在被打标记函数的实际实现外面套一个包装函数。这不仅能确保无论函数的控制流如何，都会打印结束消息，还让我们在日志中输出更多关于该函数的信息，比如返回值。
+为此，我们首先需要像在自定义 derive 宏中那样，用 \texttt{syn::\allowbreak{}parse\_\allowbreak{}macro\_\allowbreak{}input!} 解析该项的 \texttt{TokenStream}。在这里，我们将解析成 \texttt{syn::ItemFn}，它表示一个专门是函数的项。这样一来，如果用户试图把我们的属性用在其他任何类型的项上，\texttt{parse\_\allowbreak{}macro\_\allowbreak{}input!} 就会给出有用的编译错误：
+\begin{codebox}[rust]
+use proc_macro::TokenStream;
+use syn::{parse_macro_input, ItemFn};
+#[proc_macro_attribute]
+pub fn log_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as ItemFn);
+    todo!()
+}
+\end{codebox}
+接下来，我们为 \texttt{ItemFn} 中一些有用的数据项建立别名：
+\begin{codebox}[rust]
+use proc_macro::TokenStream;
+#[proc_macro_attribute]
+pub fn log_call(_attr: TokenStream, item: TokenStream)-> TokenStream {
+    let item = parse_macro_input!(item as ItemFn);
+    let sig=&item.sig
+    let name=&item.sig.ident
+    let body=&item.block
+    let vis=&item.vis
+    todo!()
+}
+\end{codebox}
+这里，\texttt{sig} 是完整的函数签名，包括函数名、参数和返回类型。我们把函数的标识符提取到 \texttt{name}，把函数体（包括首尾花括号）提取到 \texttt{body}，而 \texttt{vis} 要么包含 \texttt{pub} token，要么什么都不包含。这些最终就是实现日志功能所需的全部信息。
+\label{idx:idx_e121b76b}
+\label{idx:idx_debb24c4}
+我们可能会想：函数参数怎么办？难道不该以某种方式把它们从 \texttt{sig} 里取出来，好在新函数体里使用吗？事实证明，Rust 中的函数参数相当复杂，即便 \texttt{syn} 已把它们解析成结构化的形式也是如此，所以我们会用一个小技巧来简化实现。与其尝试解析参数，我们把函数体包进一个立即调用的闭包里。这个闭包会按引用捕获参数，使我们无需改动原函数体就能在闭包内部使用它们。最后，我们开始写 \texttt{quote!} 块：
+\begin{codebox}[rust]
+    let output = quote! {
+        #vis #sig {
+            println!("start {}", stringify!(#name));
+            let result = (|| #body)();
+            println!("end {}, result {}", stringify!(#name), result);
+            return result;
+        }
+    };
+    TokenStream::from(output)
+\end{codebox}
+\texttt{quote!} 块会创建一个新的外层函数，其可见性和签名都与被打标记的函数完全相同。接着，原函数的函数体被放进一个内部闭包，该闭包如前所述捕获参数，然后被立即调用。我们把结果存下来，打印它，再让新的外层函数将其返回。最终，我们透明地包装了被打标记的函数，并为它增添了新的行为。
+\label{idx:idx_c9f8501e}
+\label{idx:idx_14430ab1}
+这种包装函数的做法虽然很强大，但只是类属性宏众多用法中的一种。\texttt{syn} crate 让我们能以类似方式解析其他类型的项；而在 crate 生态中，这种函数包装风格在性能剖析插桩相关的 crate 里颇为常见。希望此时我们对 \texttt{TokenStream} 类型的使用已经越来越得心应手，不过我们还有一类过程宏要研究。
+\subsection{类函数宏}
+\label{idx:idx_36c0ec73}
+在代码中使用时，类函数过程宏看起来与声明式宏几乎一模一样。但与声明式宏要走 \texttt{macro\_\allowbreak{}rules!} 匹配器不同，它们和其他类型的过程宏一样，直接在 \texttt{TokenStream} 上操作。
+\label{idx:idx_305c2216}
+与类属性宏类似，类函数宏用返回的流替换输入的 \texttt{TokenStream}。我们很容易以为它们在功能上与声明式宏有大量重叠，但 crate 生态中的许多类函数宏专注于那些用其他方式无法完成的 token 操作任务。
+作为示例，我们来构建编译器内置 \texttt{stringify!} 宏的自制版本——本章到此已经见过它好几次了。如我们所知，它接收一个标识符并将其转换成字符串字面量。我们的起步方式与其他过程宏 crate 相同，不过这个特定示例不需要引入 \texttt{syn}：
+\begin{codeboxdark}
+cargo new --lib stringulate
+cd stringulate
+cargo add quote
+\end{codeboxdark}
+一如既往，制作过程宏时必须对 \texttt{Cargo.toml} 做相应修改：
+\begin{codeboxdark}
+[lib]
+proc-macro = true
+\end{codeboxdark}
+然后就可以开始编写我们的 \texttt{src/lib.rs} 文件了：
+\begin{codebox}[rust]
+use proc_macro::TokenStream;
+#[proc_macro]
+pub fn stringulate(input: TokenStream) -> TokenStream {
+    todo!()
+}
+\end{codebox}
+\label{idx:idx_7baaf2ab}
+\label{idx:idx_29ed56bf}
+同样地，我们看到它与之前创建的过程宏有许多相似之处。类函数宏用 \texttt{\#[\allowbreak{}proc\_\allowbreak{}macro]\allowbreak{}} 属性来标记，我们接收并返回一个
+\texttt{TokenStream}。下一步看起来应该很简单。我们能不能直接用 \texttt{quote!}
+把输入的 \texttt{TokenStream} 放进一对引号里呢？
+\begin{codebox}[rust]
+use proc_macro::TokenStream;
+use quote::quote;
+#[proc_macro]
+pub fn stringulate(input: TokenStream) -> TokenStream {
+    TokenStream::from(quote! {
+        "#input"
+    })
+}
+\end{codebox}
+遗憾的是，这样行不通。\texttt{quote!} 宏会把它当作字面量字符串，不会正确地把我们的输入替换进去。不过，我们还没有黔驴技穷。我们也许会惊喜地发现，\texttt{TokenStream} 有一个 \texttt{.\allowbreak{}to\_\allowbreak{}string(\allowbreak{})\allowbreak{}} 方法！这也让我们最终可用的宏变得相当简单：
+\begin{codebox}[rust]
+use proc_macro::TokenStream;
+use quote::quote;
+#[proc_macro]
+pub fn stringulate(input: TokenStream) -> TokenStream {
+    let input = input.to_string();
+    TokenStream::from(quote! {
+        #input
+    })
+}
+\end{codebox}
+\label{idx:idx_fa46ac05}
+\label{idx:idx_60b4719f}
+至此，我们已经见过了三类过程宏并逐一使用过。结合我们对声明式宏的理解，现在应该已有能力读懂遇到的任何宏实现，并为编写自己的宏打下了扎实的基础。下一节，我们通过考察一些使用宏的最佳实践，继续深入研究 Rust 宏。
+\section{宏最佳实践}
+\label{idx:idx_8f7df00e}
+与任何强大的工具一样，使用 Rust 宏时须谨慎行事才能取得最佳效果。本节我们将介绍一些最佳实践和技巧，让你的宏开发更安全、更轻松。
+\subsection{错误处理}
+\label{idx:idx_0b817c93}
+\label{idx:idx_7d991852}
+由于宏是由编译器在幕后展开的，恰当的错误处理对于帮助弄清出了什么问题至关重要，无论是编写宏时还是在代码中使用宏时都是如此。本节我们专门聚焦于过程宏中错误处理的最佳实践。
+在过程宏中处理错误有两大通用方式。第一种是触发 panic。当编译器运行你的宏时，它会捕获这个 panic 并以编译错误的形式返回。第二种方式是返回一个 \texttt{TokenStream}，其中包含对 \texttt{compile\_\allowbreak{}error!} 宏的调用。
+\label{idx:idx_7827ded0}
+\label{idx:idx_f5da390b}
+这两种方法都能正确中止宏求值并报告编译错误，但要想写出能帮助用户解决问题的错误消息却并不容易。为帮助解决这一点，\texttt{syn} crate 提供了 \texttt{syn::Error} 结构体。它可以用来生成格式美观的 \texttt{compile\_\allowbreak{}error!}，其中包含来自解析后语法树的上下文信息，该语法树由
+\texttt{syn} 生成。
+最佳实践因宏类型而异。对于类函数宏，我们之前的 \texttt{stringulate} 宏可以作为一个不错的测试用例：
+\begin{codebox}[rust]
+#[proc_macro]
+pub fn stringulate(input: TokenStream) -> TokenStream {
+    panic!("Bad input: {}", input);
+    let input = input.to_string();
+    TokenStream::from(quote! {
+        #input
+    })
+}
+\end{codebox}
+它产生的编译错误对于类函数宏来说其实相当不错：
+\begin{codebox}[rust]
+error: proc macro panicked
+  --> src/main.rs:21:22
+   |
+21 |     println!("{:?}", stringulate!(1 + 1 + 1));
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: message: Bad input: 1 + 1 + 1
+\end{codebox}
+要在我们的宏里使用 \texttt{compile\_\allowbreak{}error!}，必须返回一个会调用它的 quoted 表达式：
+\begin{codebox}[rust]
+    return TokenStream::from(quote! {
+        compile_error!("Could not parse input")
+    });
+\end{codebox}
+在类函数宏中使用时，它的行为与 panic 并没有太大差别：
+\begin{codebox}[rust]
+error: Could not parse input
+  --> src/main.rs:21:22
+   |
+21 |     println!("{:?}", stringulate!(1 + 1 + 1));
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `stringulate` (in Nightly builds,
+run with -Z macro-backtrace for more info)
+\end{codebox}
+\label{idx:idx_72685fc9}
+\label{idx:idx_69a12ade}
+编译器很贴心地告诉我们错误源自我们的宏，这是由 \texttt{panic} 方法明确指出的。对于类函数宏来说，两者输出足够相似，因此在所有情况下都推荐使用更简单的 \texttt{panic!}。
+而当使用自定义 derive 宏或属性宏时，情况就不那么简单了。在我们的 \texttt{PrettyPrint} 自定义 derive 宏中，已经有一个来自 \texttt{unimplemented!(\allowbreak{})\allowbreak{}} 宏的 panic，只要我们把这个宏用在不是结构体的东西上，它就会触发：
+\begin{codebox}[rust]
+let fields = match input.data {
+    syn::Data::Struct(data) => data.fields,
+    _ => unimplemented!(),
+};
+\end{codebox}
+我们之前提到过，这达不到生产级质量。下面看看引发这个错误时编译器会说些什么。只要尝试把我们的宏用在一个 \texttt{enum} 类型上，就能轻易触发它：
+\begin{codebox}[rust]
+#[derive(PrettyPrint)]
+enum TestEnum {}
+\end{codebox}
+我们得到的编译器消息远不如类函数宏那样有用：
+\begin{codebox}[rust]
+error: proc-macro derive panicked
+ --> src/main.rs:5:10
+  |
+5 | #[derive(PrettyPrint)]
+  |          ^^^^^^^^^^^
+  |
+  = help: message: not implemented
+\end{codebox}
+\label{idx:idx_84b69219}
+\label{idx:idx_af4317ea}
+虽然它正确地指出了失败，却没有清楚说明哪里出了问题，也没有标出正确的源码位置。如果能告诉用户究竟是代码的哪一部分引发了错误，那就好了。在本例中，那就是 \texttt{enum} 声明。
+我们来看看如何用 \texttt{syn::Error} 做到这一点：
+\begin{codebox}[rust]
+let fields = match input.data {
+    syn::Data::Struct(data) => data.fields,
+    _ => {
+        return syn::Error::new(
+            input.ident.span(),
+            "PrettyPrint custom derive only supported on structures",
+        )
+        .to_compile_error()
+        .into();
+    }
+};
+\end{codebox}
+虽然这样写比较冗长，但它让我们对错误的格式有了更强的控制力。在本例中，我们选择高亮标识符，因为转换成 \texttt{DeriveInput} 之后，\texttt{enum} 关键字就不再容易取得了。生成的消息有用得多：
+\begin{codebox}[rust]
+error: PrettyPrint custom derive only supported on structures
+ --> src/main.rs:6:6
+  |
+6 | enum TestEnum {}
+  |      ^^^^^^^^
+\end{codebox}
+\label{idx:idx_ed7af2e4}
+\label{idx:idx_2198a3a0}
+panic 可以很有用，尤其是当它们带有信息丰富的消息时，但
+\texttt{syn::Error} 让你对错误消息拥有最大的控制力。在这里花点时间
+无论对宏的开发还是对最终用户，都能带来很大回报。但错误消息并不是宏开发中唯一重要的部分。当我们陷入意想不到的情况时，需要一种调试和测试宏的手段。
+\subsection{调试与测试}
+\label{idx:idx_b575563c}
+调试宏可能颇具挑战，因为它们在编译期展开。虽然许多错误会被编译器捕获，但如果事情不按计划发展，整个过程仍可能令人沮丧。
+\label{idx:idx_205502ab}
+\label{idx:idx_4b4b64a6}
+调试任何宏（无论是声明式还是过程式）最简单的方法，就是查看编译器执行的展开。在带有\textbf{语言服务器协议}（\textbf{LSP}）工具的编辑器里，宏展开可以作为 \texttt{rust-\allowbreak{}analyzer} 语言服务器的一项功能显示出来。LSP 固然有用，但调试宏最常用的工具却在 crate 生态里。\texttt{cargo-\allowbreak{}expand} crate 为 Cargo 提供了一个插件，它会展开 crate 中的所有宏并打印出结果代码。虽然这个工具只是对一些鲜为人知的
+\texttt{rustc} 编译器标志的简单封装，但它提供了一种方便简单的方式来检查宏展开。
+要使用 \texttt{cargo-\allowbreak{}expand}，我们必须安装 \texttt{nightly} 工具链。我们不必用 \texttt{nightly} 工具链来调用它；它只是需要有一个 \texttt{nightly} 版本的 \texttt{rustc} 可用。我们在\emph{第 10 章}中为了使用 SIMD 安装了一个 \texttt{nightly} 工具链，所以你的系统上可能已经有一个了。如果没有，可以用 \texttt{rustup} 安装。
+作为演示，我们可以创建一个测试 crate，使用前面定义的 \texttt{\#[\allowbreak{}log\_\allowbreak{}call]\allowbreak{}} 属性宏：
+\begin{codebox}[rust]
+#[log_call]
+fn square(x: u32) -> u32 {
+    x * x
+}
+\end{codebox}
+\label{idx:idx_e340ffad}
+\label{idx:idx_00530ed1}
+这个函数现在被过程宏包装了起来，后者会在函数体的开头和结尾插入日志语句。
+至此，\texttt{cargo-\allowbreak{}expand} 用起来很简单。假设有一个能正确编译的 crate，并且
+机器上装有 \texttt{nightly}，那么下面这些命令就能给出该函数的
+展开结果：
+\begin{codeboxdark}
+$ cargo install --locked cargo-expand
+$ cargo expand
+\end{codeboxdark}
+默认情况下，\texttt{cargo-\allowbreak{}expand} 会对展开结果执行一次格式化处理，使其更易阅读。得到的展开大致如下：
+\begin{codebox}[rust]
+fn square(x: u32) -> u32 {
+    {
+        ::std::io::_print(format_args!("start {0}\n", "square"));
+    };
+    let result = (|| { x * x })();
+    {
+        ::std::io::_print(format_args!("end {0}, result {1}\n", "square",
+result));
+    };
+    return result;
+}
+\end{codebox}
+请注意，这个工具不仅展开了我们的过程宏，还展开了它内部的 \texttt{println!} 宏。当遇到 \texttt{format\_\allowbreak{}args!} 之类的内置宏时，它就停止展开。这些内置宏在库源码中被标记为 \texttt{\#[\allowbreak{}rustc\_\allowbreak{}builtin\_\allowbreak{}macro]\allowbreak{}}，并直接实现在编译器内部，因此没有可供查看的源码级展开。
+\label{idx:idx_bb401ad3}
+展开宏的能力是很好的调试辅助，但如果我们想确保宏持续正确呢？那就需要研究单元测试。然而，若我们尝试为过程宏编写测试，很快就会发现在过程宏之外使用 \texttt{proc\_\allowbreak{}macro::\allowbreak{}TokenStream} 类型是不被允许的，测试会触发 panic，因而失败。
+\label{idx:idx_48828907}
+为解决这一问题，crate 生态提供了 \texttt{proc\_\allowbreak{}macro2} crate。要为我们的宏编写单元测试，必须以 \texttt{proc\_\allowbreak{}macro2::\allowbreak{}TokenStream} 为基准重写它。等我们执行 \texttt{cargo add}
+\texttt{proc\_\allowbreak{}macro2} 之后，就可以把我们的过程宏 crate 重构成下面这样：
+\begin{codebox}[rust]
+use proc_macro2::TokenStream as TokenStream2;
+fn log_call_internal(_attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
+}
+#[proc_macro_attribute]
+pub fn log_call(attr: TokenStream, item: TokenStream) -> TokenStream {
+    return log_call_internal(attr.into(), item.into()).into();
+}
+\end{codebox}
+现在，我们把所有功能都迁移到了 \texttt{proc\_\allowbreak{}macro2} 版的 \texttt{TokenStream}，并在真正的过程宏入口点与 \texttt{proc\_\allowbreak{}macro::\allowbreak{}TokenStream} 之间来回转换。为求完整，下面把 \texttt{log\_\allowbreak{}call\_\allowbreak{}internal} 的定义补全：
+\begin{codebox}[rust]
+fn log_call_internal(_attr: TokenStream2, item: TokenStream2)-> TokenStream2 {
+    let item: ItemFn = syn::parse2(item).expect("Failed to parse fn");
+    let sig=&item.sig
+    let name=&item.sig.ident
+    let body=&item.block
+    let vis=&item.vis
+    let output = quote! {
+        #vis #sig {
+            println!("start {}", stringify!(#name));
+            let result = (|| #body)();
+            println!("end {}, result {}", stringify!(#name), result);
+            return result;
+        }
+    };
+    output
+}
+\end{codebox}
+\label{idx:idx_73f414fc}
+\label{idx:idx_0065ea76}
+除了改用 \texttt{proc\_\allowbreak{}macro2::\allowbreak{}TokenStream} 作为 API 之外，这与我们之前的实现完全相同。我们注意到一处显著变化：不再使用 \texttt{syn::\allowbreak{}parse\_\allowbreak{}macro\_\allowbreak{}input!}，而是改用 \texttt{syn::parse2} 函数。原因是 \texttt{parse\_\allowbreak{}macro\_\allowbreak{}input!} 宏只能配合 \texttt{proc\_\allowbreak{}macro::\allowbreak{}TokenStream} 工作。因此，我们必须改用（基本上）等价的
+\texttt{syn::parse2}，来处理 \texttt{proc\_\allowbreak{}macro2}。
+现在，我们应该可以着手编写一些测试了。关于这个函数，可能有多个性质值得测试，但在本示例测试中，我们直接写出期望的展开并加以比较。我们可以把下面这段代码直接放进 \texttt{lib.rs}：
+\begin{codebox}[rust]
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn test_expansion() {
+        use quote::quote;
+        let input = quote! {
+            fn square(x: u32, y: u32) -> u32 { x * x }
+        };
+        let expected = quote! {
+            fn square(x: u32, y: u32) -> u32 {
+                println!("start {}", stringify!( square ) );
+                let result = (|| { x * x }) ();
+                println!("end {}, result {}", stringify!( square ), result);
+                return result;
+            }
+        };
+        let attr = TokenStream2::new();
+        let item = input;
+        let output = log_call_internal(attr, item);
+        assert_eq!(output.to_string(), expected.to_string());
+    }
+}
+\end{codebox}
+\label{idx:idx_4bff7bfa}
+\label{idx:idx_0e9e1ed0}
+这段代码不少，但大多是直白的样板。我们首先搭好样板测试模块和测试函数，确保它只在测试配置下编译。接着用 \texttt{quote} 建立输入的以及期望的 \texttt{proc\_\allowbreak{}macro2::\allowbreak{}TokenStream} 类型，并调用我们的内部过程宏。assert 把输出与期望按字符串比较。生成的字符串中 token 会被规范化，因此不必担心格式，但我们必须确保展开中的 token 完全匹配。
+\label{idx:idx_b121e272}
+\label{idx:idx_9ad2b3b0}
+对过程宏 crate 运行 \texttt{cargo test}，现在应该能看到测试通过了。以这种方式测试过程宏的能力，对宏的开发和维护都大有帮助。
+\section{小结}
+在本章中，我们探讨了 Rust 宏这一总体主题，从宏系统中传统的不安全与误用来源讲起，并展示了 Rust 如何选择规避这些问题。随后，我们为 Rust 允许的每一种宏类型各构建了一个示例，学会了不仅使用 \texttt{macro\_\allowbreak{}rules!}，还使用 \texttt{syn} 和 \texttt{quote} crate。最后，我们探讨了围绕宏使用的一些最佳实践。
+在最后一章，我们将为这次 Rust 探索之旅收尾，并谈谈学习旅程中一些可能的后续步骤。
+\needspace{26\baselineskip}
+\begin{samepage}
+\subsection{获取本书的 PDF 版本及更多内容}
+扫描二维码（或前往 \texttt{packtpub.\allowbreak{}com/\allowbreak{}unlock}）。按书名搜索本书，确认版本，然后按照页面上的步骤操作。
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\emph{注意：请把发票备在手边。直接从 Packt 购买无需发票。}
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\end{samepage}

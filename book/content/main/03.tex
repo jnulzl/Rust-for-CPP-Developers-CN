@@ -1,0 +1,434 @@
+既然我们已经探究了 Rust 的优势，也对其语法有了初步感受，现在是时候理解 Rust 究竟如何强制执行其安全检查了。我们将深入剖析 Rust 对程序施加的编译期与运行期限制，并讨论由此应当如何最好地组织代码。到本章结束时，我们将很好地理解 Rust 的安全模型，以及它如何通过所有权、借用和生命周期这些概念帮助我们写出正确的程序。
+本章将涵盖以下主要主题：
+\begin{itemize}
+  \item 追踪所有权
+  \item 借用数据
+  \item 指定生命周期
+  \item 理解 panic
+  \item 改变我们编写代码的方式
+\end{itemize}
+\section{技术要求}
+本章的 Rust 示例使用 1.\allowbreak{}82.\allowbreak{}0 版本，但更高版本的 Rust 仍能正常运行。\href{https://play.rust-lang.org/}{\texttt{https:/\allowbreak{}/\allowbreak{}play.\allowbreak{}rust-\allowbreak{}lang.\allowbreak{}org/\allowbreak{}}} 上的 Rust Playground 是试验这些代码示例的绝佳方式。
+本章的 C++ 代码使用 C++11 的概念，必须用 C++11 或更新的版本编译。
+\section{追踪所有权}
+\label{idx:idx_53f08b8b}
+要判断对某份数据的某个操作在特定作用域内是否合法，Rust 编译器首先必须知道谁或什么\emph{拥有}这份数据。在程序的整个流程中追踪每份数据的所有者可能是一项艰巨的任务，但 Rust 的许多行为都是围绕简化编译器的工作而构建的。一旦我们学会并内化了这些简化，它们同样能减轻我们程序员的认知负担。本节中，我们将揭示 Rust 的所有权规则，以及它们如何帮助防止错误行为渗入我们的程序。
+\subsection{单一所有权原则}
+\label{idx:idx_8b2640dd}
+在 Rust 中，每个值在同一时刻只有一个所有者。对于来自 C++ 的程序员来说，这往往会带来一些令人意外的行为。例如，下面这段代码会在编译期报错：
+\begin{codebox}[rust]
+let data1 = String::from("Hello World!");
+let data2 = data1;
+println!("{}", data1);
+\end{codebox}
+在 C++ 中，等价的代码大致是这样的：
+\begin{codebox}[rust]
+std::string data1 = "Hello World!"
+std::string data2 = data1;
+std::cout << data1 << std::endl;
+\end{codebox}
+这里，我们的 C++ 代码毫无问题地通过了编译，\texttt{data1} 和 \texttt{data2} 两个变量各自持有一份完整的字符串副本。但在 Rust 中，我们违反了这门语言的一条基本规则。
+在这个例子中，创建了一个 \texttt{String} 结构，\texttt{data1} 变量拥有其数据的所有权。在第二行，所有权被转移，或者说\emph{移动}到了 \texttt{data2}。所有权会通过赋值、传参和函数返回等操作转移。既然字符串的数据已经被转移给了另一个所有者，程序就再也无法以任何方式使用 \texttt{data1} 变量了，尝试打印其内容会产生如下这样的编译错误：
+\begin{codeboxdark}
+error[E0382]: borrow of moved value: `data1`
+\end{codeboxdark}
+\label{idx:idx_6a028789}
+如果没有一些额外的背景知识，这个错误大概很难理解。要明白为什么
+\texttt{data1} 不再有效，我们必须理解：在 Rust 中，所有权从 \texttt{data1} 转移到 \texttt{data2} 是通过\emph{移动}来实现的。这让前面的例子与下面这段 C++
+代码更为接近：
+\begin{codebox}[rust]
+std::string data1 = "Hello World!";
+std::string data2 = std::move( data1 );
+std::cout << data1 << std::endl;
+\end{codebox}
+这段代码在 C++ 中很可能是有缺陷的。在 C++ 中移动 \texttt{std::string} 会让该字符串处于\emph{有效但未指定}的状态，打印其内容没有任何有用的意义。虽然这段代码效率不高，但它仍然能够编译通过，把潜在的错误留给程序员在运行时去发现。
+\label{idx:idx_386732c9}
+在 Rust 中，被移动的结构体会逐字节拷贝到它新的内存位置。这有时被称为\emph{浅拷贝}，因为它只拷贝结构体自身的内容。在浅拷贝中，新结构体会获得结构体中所存指针的直接副本。这些内部指针所跟踪的任何堆分配都不会被拷贝。
+\label{idx:idx_263db87c}
+\label{idx:idx_0c9c8950}
+相比之下，\emph{深拷贝}不仅拷贝结构体，还会为结构体中指针所引用的任何数据分配新内存，并把被指向的数据拷贝到那块内存中。因此，深拷贝会在内存的另一个位置创建出该结构体及其所有被引用数据的完全独立副本。在 Rust 中，深拷贝被称为\emph{克隆}。
+在 Rust 中，要克隆我们的类型，必须实现 \texttt{Clone} trait。这个 trait 只有一个函数，
+\texttt{clone()}，它返回我们结构体的深拷贝。许多标准类型都有这个 trait
+为我们实现好了，通常是对结构体的每个成员依次调用 \texttt{clone()} 方法。这种实现呼应了深拷贝的递归本质。由于深拷贝得到的结果完全独立于原始数据，Rust 编译器会把它识别为一份有着完全不同的所有者的新数据。因此，我们可以像这样用克隆来修正前面那个 Rust 例子：
+\begin{codebox}[rust]
+let data1 = String::from("Hello World!");
+let data2 = data1.clone();
+println!("{}", data1);
+\end{codebox}
+\label{idx:idx_94eb5ca6}
+思考 \texttt{String} 类型的内部数据布局，能很好地示例 Rust 中移动与克隆各自的效果。这个类型的一个简化版本可以实现为一个持有两个成员值的结构体：一个指向堆内存中字符缓冲区的指针，以及一个存储缓冲区大小的值。在 Rust 中，当这样的结构体被移动时，在 64 位架构上结果是一次 16 字节的内存拷贝；而克隆则会把结构体及其持有的整个缓冲区一并拷贝到堆内存中另一处新分配的位置。用 C++ 风格的伪代码来表示，大致是这样的：
+\begin{codebox}[rust]
+struct String {
+    const char* data;
+    uint64_t size;
+    void move(String& newLocation) {
+        newLocation.data = data;
+        newLocation.size = size;
+    }
+    void clone(String& newLocation) {
+        newLocation.data = heap_allocate(size);
+        newLocation.size = size;
+        copy_bytes(newLocation.data, data, size);
+    }
+};
+\end{codebox}
+这个例子展示了移动与克隆这两个概念：移动在我们的 Rust 代码中是在幕后自动发生的，而克隆必须由我们显式请求。它还给了我们一条线索，说明为什么 Rust 必须让任何给定的结构体只保留一个所有者。在 \texttt{newLocation.\allowbreak{}data =\allowbreak{}}
+\label{idx:idx_d564bbf9}
+\texttt{move} 函数中的 \texttt{data} 之后，我们就有两个 \texttt{String} 结构体，各自指向堆上的同一份
+数据。如果只是做了一次浅拷贝，我们可能就得决定两个结构体中哪一个负责释放那份数据。Rust 的答案很简单，因为始终只有一个所有者：当所有权转移时，释放数据的责任也一并转移给了新的所有者。
+\subsection{清理旧数据}
+\label{idx:idx_56383d94}
+释放结构体所占用的资源，在 C++ 中也许被称作\emph{析构}，在 Rust 中则称作\emph{丢弃}（drop）。丢弃一个结构体时，Rust 会递归遍历所有成员，并按照它们在结构体中出现的顺序销毁它们。结构体可以通过实现 \texttt{Drop} trait 来添加自定义的析构代码，该 trait 提供了一个 \texttt{drop} 函数。如果提供了它，\texttt{drop} 函数会在其余析构过程开始之前被调用。
+每当结构体的所有者离开作用域时，该结构体就会被丢弃。与 C++ 一样，作用域通常由一对花括号标记，其中包含一条或多条语句，统称为\emph{块}（block）。Rust 中的作用域有一些细微差别，因为所有权可以通过块表达式或函数返回来转移到更高的作用域：
+\begin{codebox}[rust]
+struct DropTest;
+impl Drop for DropTest {
+    fn drop(&mut self) {
+        println!("drop");
+    }
+}
+fn main() {
+    {
+        println!("checkpoint 1");
+        let outer = {
+            println!("checkpoint 2");
+            let inner = DropTest;
+            inner
+        };
+        println!("checkpoint 3");
+    }
+    println!("checkpoint 4");
+}
+\end{codebox}
+\label{idx:idx_7201f6a2}
+前面的代码会打印如下内容：
+\begin{codeboxdark}
+checkpoint 1
+checkpoint 2
+checkpoint 3
+drop
+checkpoint 4
+\end{codeboxdark}
+在这个例子中，我们用块表达式把所有权从 \texttt{inner} 转移到了 \texttt{outer}，所以直到 \texttt{outer} 离开作用域时才会发生丢弃。
+\subsection{浅拷贝就够用的时候}
+\label{idx:idx_d7767ad9}
+有时我们会觉得 Rust 的所有权规则用起来有些束手束脚。对于整数或浮点类型，我们也总得操心它的所有者吗？考虑下面这段代码：
+\begin{codebox}[rust]
+let data1 = 0u32;
+let data2 = data1;
+println!("{}", data1);
+\end{codebox}
+这个例子与本章的第一个代码示例几乎完全相同，只不过我们用一个整数字面量后缀作为小小的语法便利，把数据的类型从
+\texttt{String} 改成了 \texttt{u32}。仿照那个例子，我们应当会发现所有权已从 \texttt{data1} 转移到了 \texttt{data2}，并且在尝试访问先前那个
+所有者时，代码会产生编译错误。然而出乎意料的是，这段代码能正确编译并运行，打印出 \texttt{0}。
+这是怎么回事？Rust 的开发者们认识到，单一所有权原则对某些类型的代码来说可能不太方便，于是提供了一种在能够安全做到时选择退出该原则的手段。在这里，能够安全做到意味着浅拷贝和深拷贝的行为完全一致。对于任何满足这一要求的结构体，我们都可以用一个名为 \texttt{Copy} 的\emph{标记 trait}（marker trait）来选择退出单一所有权原则。
+标记 trait 到底是什么？我们知道 trait 指定了一个可以为结构体实现的接口，本章中我们已经见过几个例子，比如
+\texttt{Clone} 和 \texttt{Drop}。标记 trait 就是一种不关联任何函数的 trait。它存在的唯一
+目的，就是向编译器提供关于我们类型的某条特定信息。
+标记 trait 可以像下面这样实现：
+\begin{codebox}[rust]
+impl Copy for MyStruct {}
+\end{codebox}
+不过，定义 \texttt{Copy} trait 更为常见的方式是\emph{派生}（derive）它。在 Rust 中派生一个 trait，就是让编译器在程序员完全不介入的情况下实现整个 trait。在可以使用时，这能大幅减少样板代码。
+为一个结构体派生 \texttt{Copy} 看起来像这样：
+\begin{codebox}[rust]
+#[derive(Copy, Clone)]
+struct MyStruct;
+\end{codebox}
+我们也派生了 \texttt{Clone}，这并非偶然。Rust 要求任何实现了 \texttt{Copy} 的结构体都必须实现 \texttt{Clone}。派生这些 trait 所生成的代码，只会对结构体的每个成员调用该 trait 提供的函数。正因如此，任何实现了 \texttt{Clone} 却没有实现 \texttt{Copy} 的类型，都可能妨碍用户为包含它的类型派生 \texttt{Clone}。
+举例来说，如果 \texttt{u32} 类型实现了 \texttt{Copy} 却没有实现 \texttt{Clone}，我们就无法为任何包含
+\texttt{u32} 类型的结构体派生 \texttt{Clone}。由于每个可复制类型按定义都可克隆，这样做
+\label{idx:idx_231d7e61}
+在技术上没有任何正当理由，Rust 的设计者决定绕过这个问题，要求可复制类型必须同时实现这两个 trait。
+对实现了 \texttt{Copy} 的结构体的另一条限制是，它们也不能实现
+\texttt{Drop}。因为 \texttt{Copy} 只用于不含任何内部堆分配的平凡类型，所以
+用户自定义的析构函数没有什么有用的功能可提供。既然我们已经讲完了 Rust 中所有权与拷贝背后的主要概念，接下来就来看看如何使用引用。
+\section{借用数据}
+\label{idx:idx_b3c8ce76}
+一个在任何时刻只允许单一所有者的模型，看起来可能有点束手束脚，尤其是当它分别依靠移动和克隆来做浅拷贝与深拷贝时。通常，在向函数传参时，有时甚至在把数据存进结构体时，我们只需要用一个引用，而不必把整个结构体传来传去。幸运的是，Rust 允许我们通过从所有者那里\emph{借用}数据来得到一个指向该数据的引用。在本节中，我们把创建引用的这个动作称为“借用”，而用“引用”指代借用所产生的那份值。
+\label{idx:idx_d9e4d7c4}
+\label{idx:idx_5daf4659}
+与所有权一样，Rust 对引用的使用施加了额外的规则，以便更容易保证程序行为正确。编译器中负责强制执行这些规则的部分通常被称为\emph{借用检查器}（borrow checker）。
+\subsection{借用不可变数据}
+\label{idx:idx_db7b2b3c}
+不可变引用是指不会导致被借用数据发生变化的引用，无论该数据本身是否可变。要创建一个不可变引用，我们在想借用的数据前面加上 \texttt{\&} 运算符。这样，一个存放被借用 \texttt{String} 的变量就具有 \texttt{\&String} 类型，我们把它读作“对 \texttt{String} 的引用”。与 C++ 引用一样，Rust 中的引用在内部的作用就是指向数据的指针，只不过在它周围附加了一些额外规则，让访问更加安全。
+对于不可变借用，我们只需遵守一条规则：同一份数据在同一个作用域内可以按需被不可变地借用任意多次，但任何一个引用的存活时间都不能超过它们所借用的数据。
+例如，下面这段 Rust 代码将无法通过编译：
+\begin{codebox}[rust]
+fn main() {
+    let borrow_outer = {
+        let data = 0u32;
+        &data
+    };
+    println!("{}", borrow_outer);
+}
+\end{codebox}
+这里，我们试图通过块表达式把指向 \texttt{data} 的引用传递到外层作用域，但我们借用的数据在该作用域结束时就被丢弃了。编译器好心地告诉我们这是不允许的：
+\begin{codebox}[rust]
+error[E0597]: `data` does not live long enough
+ --> src/main.rs:4:9
+  |
+2 |     let borrow_outer = {
+  |         ------------ borrow later stored here
+3 |         let data = 0u32;
+  |             ---- binding `data` declared here
+4 |         &data
+  |         ^^^^^ borrowed value does not live long enough
+5 |     };
+  |     - `data` dropped here while still borrowed
+\end{codebox}
+\label{idx:idx_79957e23}
+之所以能进行这种检查，正是因为每份数据都只有一个所有者。
+\subsection{借用可变数据}
+\label{idx:idx_efa1d5cc}
+可变地借用数据会让事情复杂不少。与 Rust 中的其他概念一样，用 \texttt{\&mut} 运算符借用时必须显式指定可变性，而对 \texttt{String} 类型的借用得到的类型是 \texttt{\&\allowbreak{}mut String}。
+为确保可变借用是安全的，Rust 编译器对它强制执行以下三条规则：
+\begin{itemize}
+  \item 与不可变引用一样，可变引用不能比它拥有的数据存活得更久。
+  \item 我们所借用的数据必须被声明为可变。
+  \item 每当我们使用一个可变借用时，在同一个作用域内就不能再使用任何其他借用，无论可变还是不可变。
+\end{itemize}
+下面来考察这些规则对应的编译器错误。在讲不可变借用时，我们已经见过第一条规则的一个例子，所以这里从第二条规则开始。下面这段代码会试图违反这条规则：用一个可变借用来创建指向一份不可变数据的可变引用：
+\begin{codebox}[rust]
+let data = 0u32;
+let borrow=&mutdata
+\end{codebox}
+编译器立刻拒绝，并给出类似下面这样的信息：
+\begin{codebox}[rust]
+error[E0596]: cannot borrow `data` as mutable, as it is not declared as mutable
+ --> src/main.rs:3:18
+  |
+3|letborrow=&mutdata
+  |                  ^^^^^^^^^ cannot borrow as mutable
+\end{codebox}
+\label{idx:idx_2611dffd}
+这条规则应该不难理解，因为数据是不可变的，而可变引用只有在我们试图修改它时才有用。在 C++ 中，\texttt{const} 没有那么严格，可以用 \texttt{const\_\allowbreak{}cast<\allowbreak{} >\allowbreak{}} 或 C 风格强制转换去掉，但在 Rust 里，安全代码中没有任何办法能改动不可变变量。
+下面来看一段违反第三条规则的代码：在某个不可变引用已在使用时，又试图借用同一份数据：
+\begin{codebox}[rust]
+let mut data = 0u32;
+let borrow=&data
+let borrow_mut=&mutdata
+println!("{}, {}", borrow, borrow_mut);
+\end{codebox}
+编译时会产生以下错误：
+\begin{codeboxdark}
+error[E0502]: cannot borrow `data` as mutable because it is also borrowed as
+immutable
+\end{codeboxdark}
+同样地，如果我们试图在同一个作用域内对同一份数据做两次可变借用，编译器也会抓出这个问题：
+\begin{codebox}[rust]
+let mut data = 0u32;
+let borrow_mut_1=&mutdata
+let borrow_mut_2=&mutdata
+println!("{}, {}", borrow_mut_1, borrow_mut_2);
+\end{codebox}
+这会产生一个类似的编译器错误：
+\begin{codeboxdark}
+error[E0499]: cannot borrow `data` as mutable more than once at a time
+\end{codeboxdark}
+\label{idx:idx_a02592ca}
+这些规则会让可变引用难以正确使用。一般来说，好的做法是尽量把使用它们的作用域缩到尽可能小，以免招致编译器的雷霆之怒。
+\subsection{解引用借用}
+\label{idx:idx_629c43f7}
+解引用发生在使用 \texttt{*} 运算符的时候。解引用运算符最常见的用途，是修改可变借用所指向的数据：
+\begin{codebox}[rust]
+let mut owned = 0;
+let borrowed=&mutowned
+*borrowed = 1;
+println!("{}", owned);
+\end{codebox}
+正如预期，这段代码打印出 \texttt{1}。
+我们也可以用解引用从一个引用给另一个变量赋值，但总的来说这个用途相当有限，因为我们只能对实现了 \texttt{Copy} 的类型这样做。别忘了，数据毕竟是借来的。就像邻居把你借给他的工具转手给别人是不对的，编译器也不允许借用者转移它正在借用的数据的所有权。
+不过，就当好玩，我们不妨试一下，看看编译器会说什么：
+\begin{codebox}[rust]
+let data = String::new();
+let borrow=&data
+let stolen = *borrow;
+\end{codebox}
+正如预期，编译器对这种情形很不满意：
+\begin{codebox}[rust]
+error[E0507]: cannot move out of `*borrow` which is behind a shared reference
+ --> src/main.rs:4:14
+  |
+4 | let stolen = *borrow;
+  |              ^^^^^^^ move occurs because `*borrow` has type `String`, which
+does not implement the `Copy` trait
+  |
+\end{codebox}
+\label{idx:idx_3636e30b}
+正如编译器提示的那样，如果我们对一个实现了 \texttt{Copy} 的类型（比如任意整数类型）这样做，程序就能按我们预期的方式编译并运行。
+\subsection{方法调用中的借用}
+\label{idx:idx_cabb852c}
+我们记得，在 \emph{第 2 章} 中，Rust 的方法被定义为把名为 \texttt{self} 的参数作为第一个参数的关联函数，最常见的形式是 \texttt{\&self} 或 \texttt{\&mut self}。现在我们可以认出，它们分别是不可变引用和可变引用。调用方法这一行为会借用我们调用方法所依托的那个对象，而这些借用必须遵守我们前面已经发现的全部规则。
+下面看一个例子：试图对一个已经被借用的对象调用可变方法。我们预计这会失败，因为在一个作用域内，可变借用只能是唯一处于活动状态的借用：
+\begin{codebox}[rust]
+let mut data = String::new();
+let borrow=&data
+data.push_str("Hello");
+println!("{}", borrow);
+\end{codebox}
+果不其然，这给出了一个我们如今已经很熟悉的错误：
+\begin{codeboxdark}
+error[E0502]: cannot borrow `data` as mutable because it is also borrowed as
+immutable
+\end{codeboxdark}
+\label{idx:idx_f3c42eba}
+Rust 围绕借用制定的严格规则，使程序易于被编译器验证；但当我们需要把引用传给函数或存进结构体时，就得多给编译器一点帮助——提供关于数据预期存活多久的额外信息。这就引出了 Rust 安全模型的第三个方面：\textbf{生命周期}。
+\section{指定生命周期}
+要想验证整个程序，编译器必须始终能判断出：被借用数据的所有者是否仍然存活、仍在作用域内。在某些情况下，这种分析超出了编译器的能力，它得依靠我们来帮忙。这里就轮到\emph{生命周期标注}登场了。
+\subsection{理解生命周期标注}
+\label{idx:idx_ee94bd1c}
+Rust 中的每个引用都有一个生命周期。跟踪这些生命周期是借用检查器最重要的职责之一。我们已经见过它的工作原理：阻止引用指向那些因离开作用域而被释放的数据。
+大多数时候，我们不必操心这些引用的生命周期——它们要么被推断出来，要么被省略。有些代码甚至不允许我们指定生命周期。生命周期标注可以识别为以单引号开头的、小写形式的标识符，出现在泛型类型参数或引用类型中：
+\begin{codebox}[rust]
+ fn print<'a>(s: &'a str) {
+    println!("{}", s);
+}
+\end{codebox}
+这里生命周期是单个字母 \texttt{a}。Rust 代码中的大多数生命周期都遵循单字母约定：从 "a" 开始，每多需要一个生命周期就取字母表中的下一个字母。但生命周期名可以是任何以单引号字符开头的标识符。被 \texttt{< >} 括起来的部分声明该生命周期将用于这个函数。我们通常会把生命周期直接放在 \texttt{\&} 字符之后，在声明引用参数时把该生命周期赋给这个引用。
+\subsection{函数中的生命周期}
+\label{idx:idx_9910935f}
+讨论函数中的生命周期，最容易的方式是先讲讲什么时候不需要指定它们。当一个函数接收引用作为参数、但不返回引用时，我们就无需指定这些参数的生命周期。在安全代码中，函数内部不会发生任何导致引用的所有者被丢弃的情况。
+当函数返回引用时，情况就开始变得稍复杂了。编译器会推断：如果函数只有一个引用参数，那么返回的引用必然与该参数拥有相同的生命周期。这是一条合理的推断，因为安全 Rust 代码的规则不允许我们产生对全局变量之外的任何其他东西的借用。
+但如果函数有两个或更多引用参数呢？此时编译器无法判断究竟哪个引用参数与返回值共享生命周期。除非对函数体做复杂的静态分析，否则编译器无法确定这一点。在约束不那么严格的编程语言里，结果甚至可能随传入函数的数据而变化。
+因此，对于带有多个引用参数、并且有一个或多个引用返回值的函数，我们必须指定生命周期标注。由于生命周期标注是一种泛型构造，函数的生命周期标注会与函数用到的泛型类型共享同一块语法空间。这可能带来令人望而生畏的语法爆炸：
+\begin{codebox}[rust]
+fn get_cmd<'a, 'b,T>(&'a mut self,param:&'bT)-> &'a mut Command;
+\end{codebox}
+\label{idx:idx_895179bc}
+没人会说这个函数定义好看，但只要把它拆开来看，很快就能理解。\texttt{get\_cmd} 函数有两个生命周期不同的引用参数。我们并未对这两个生命周期之间的关系做任何断言，只是说明它们允许不同。这个函数真正告诉我们的，是返回值的生命周期与对象本身的生命周期完全相同，这很可能是因为它在借用对象的一部分。有了这些信息，编译器仅凭函数签名就能在所有的调用点验证引用的生命周期。
+\subsection{结构体中的生命周期}
+\label{idx:idx_6be4fc38}
+除了要理解每个函数参数的生命周期，Rust 编译器还必须理解每个结构体的生命周期。
+看看下面的代码：
+\begin{codebox}[rust]
+let i = 0;
+let holder=IntHolder{data:&i};
+println!("{}", holder.data);
+\end{codebox}
+虽然还没有展示 \texttt{IntHolder} 的定义，但我们能看出它持有一个指向整数类型的引用。借用检查器如何验证这个引用不会比它的所有者存活得更久呢？为了帮助编译器，我们必须在结构体定义内部标注生命周期：
+\begin{codebox}[rust]
+struct IntHolder<'a> {
+    data: &'a i32,
+}
+\end{codebox}
+有了这个标注，我们就告诉编译器：对象与其成员的生命周期相同，也就是说，\texttt{data} 成员持有的引用必须在 \texttt{IntHolder} 对象的整个生命周期内都有效。
+对于结构体持有的引用，没有生命周期推断，也没有生命周期省略。在这些情况下，结构体必须显式指定生命周期。一种可能的解释涉及那个特殊的
+\texttt{static} 生命周期。它被赋予静态全局数据，这类数据实际上永远不会在
+程序的正常执行过程中被销毁。最常见的用法是持有一个指向字符串字面量的引用，不过这里我们改为修改 \texttt{IntHolder} 结构体，让它使用 static 生命周期：
+\begin{codebox}[rust]
+struct IntHolder {
+    data: &'static i32,
+}
+\end{codebox}
+做出这一改动后，原来的程序就无法再编译了：
+\begin{codeboxdark}
+error[E0597]: `i` does not live long enough
+\end{codeboxdark}
+\label{idx:idx_1cb7f6bc}
+我们已经告诉编译器：任何会在程序正常执行过程中被丢弃的东西，都不能与我们的结构体一起使用。要让它重新编译通过，需要把这个引用变成全局变量：
+\begin{codebox}[rust]
+static I: i32 = 0;
+fn main() {
+    let holder=IntHolder{data:&I};
+    println!("{}", holder.data);
+}
+\end{codebox}
+生命周期标注的规则并不复杂，但要正确使用它们还需要一些练习。处理生命周期的那部分大脑，在其他编程语言里得不到多少锻炼；不过在用 Rust 写了足够多的代码之后，这种思维方式最终会变得像本能一样自然。也许这就是为什么一些程序员声称，学习 Rust 帮助他们在其他语言中写出并设计出更好的代码。
+接下来，我们将探讨 Rust 安全拼图的最后一块：处理关键的运行时错误。
+\section{理解 panic}
+\label{idx:idx_b5a9aae9}
+虽然 Rust 编译器竭尽全力防止问题发生，但 Rust 安全策略中很大一部分，是决定出错时该怎么办。对于那些程序无法合理恢复的失败，Rust 把 \emph{panic} 用作最后一道防线的错误处理手段。本节我们将考察 panic 会做什么、哪些问题会引发 panic，以及我们如何编写程序来避免它们。
+\subsection{作为安全机制的 panic}
+\label{idx:idx_0605ff5f}
+在\emph{第 1 章}中，我们谈到过读写超出已分配内存所导致的各类 bug 如何长期困扰着 C 和 C++ 软件。缓冲区越界是种种安全问题中最危险的一类。下面看看 Rust 如何处理读取数组越界：
+\begin{codebox}[rust]
+fn main() {
+    let values = [0; 10];
+    let index = 11;
+    println!("Element at index {} is: {}", index, values[index]);
+}
+\end{codebox}
+运行时，这个程序会产生如下输出：
+\begin{codeboxdark}
+thread 'main' panicked at src/main.rs:4:51:
+index out of bounds: the len is 10 but the index is 11
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+\end{codeboxdark}
+我们触发了第一个 panic！程序的运行时检查检测到索引越界，打印出一条有用的错误信息（其中包含出错的那一行源代码），并提供了生成回溯的选项，帮助我们进一步缩小问题范围。
+退出程序是满足 Rust 安全要求的必要之举。缓冲区越界之所以如此危险，是因为它可能被利用，让攻击者在一无所知的用户机器上远程运行自己的恶意代码。与其继续执行而放任这种情况发生，Rust 程序会立即退出。
+\label{idx:idx_f7760088}
+如果你曾花大量时间追查 C++ 代码中由内存覆写引发的 bug，这看起来会是极大的时间节省。但如果你是最终用户，程序带着一条吓人的错误信息突然退出，可能会显得十分麻烦。因此，我们要尽可能避免在 Rust 代码中触发 panic。
+\subsection{避免 panic}
+\label{idx:idx_98423391}
+避免 panic 的第一步，是了解哪些类型的操作会引发 panic。Rust 标准库文档非常擅长指出任何函数可能触发 panic 的条件。第三方 crate 文档并不总能达到标准库那样的质量水准，但当它缺少信息时，通常仍可以查阅源代码来确认。
+Rust 中有几种常见的操作会触发 panic。最明显的是少数几个宏，程序一旦调用它们就会 panic。\texttt{unreachable!} 宏用于标记无法通过正常执行流到达的代码。\texttt{todo!} 和
+\texttt{unimplemented!} 宏用于标记那些预期日后应当补全的代码。而
+\texttt{assert!} 宏及其若干变体，在预期条件不满足时会触发 panic。
+当然，\texttt{panic!} 宏会无条件地带着自定义消息触发 panic。
+我们在\emph{第 2 章}中见过的 \texttt{Result} 枚举提供了一个名为 \texttt{unwrap} 的函数：如果枚举中存的是 \texttt{Ok} 值，它就返回该值；如果存的是 \texttt{Err} 值，它就会触发 panic。而
+\texttt{Option} 类型表示一个可选值，其取值要么是 \texttt{Some}，要么是 \texttt{None}，它也有一个类似的
+函数。由于 \texttt{Result} 和 \texttt{Option} 类型在 API 中被频繁使用，处于 Rust 学习初期的程序员往往会频繁使用 \texttt{unwrap}。在下面的例子中，我们可以看到它是如何引发 panic 的：
+\begin{codebox}[rust]
+let option_some: Option<u32> = Some(1);
+let option_none: Option<u32> = None;
+println!("unwrap some: {}", option_some.unwrap());
+println!("unwrap none: {}", option_none.unwrap());
+\end{codebox}
+运行时，它会产生如下输出：
+\begin{codebox}[rust]
+thread 'main' panicked at src/main.rs:5:41:
+called `Option::unwrap()` on a `None` value
+\end{codebox}
+\label{idx:idx_96896a5d}
+虽然 \texttt{unwrap} 很有用，但频繁调用它就有触发 panic、让程序毫无征兆地中止的风险。我们总可以用 \texttt{match} 或 \texttt{if let} 语句处理 \texttt{Result} 和 \texttt{Option} 类型所有可能的取值，但这些枚举也有一系列不会 panic 的 \texttt{unwrap} 变体。如果你正打算使用 \texttt{unwrap}，务必查阅文档。也许 \texttt{unwrap\_or} 或它的某个伴生函数是更好的选择——它会给程序一个兜底值，而不是带着错误触发 panic。
+我们可以用 \texttt{unwrap\_or} 修正前面的例子：
+\begin{codebox}[rust]
+let option_some: Option<u32> = Some(1);
+let option_none: Option<u32> = None;
+println!("unwrap some: {}", option_some.unwrap_or(0));
+println!("unwrap none: {}", option_none.unwrap_or(0));
+\end{codebox}
+现在程序的输出如下，没有发生任何 panic：
+\begin{codeboxdark}
+unwrap some: 1
+unwrap none: 0
+\end{codeboxdark}
+有一种场景下 panic 总是没问题的：测试。当测试遇到 panic 时，它会让测试失败，而不是让测试运行器进程退出。这几乎总是我们想要的行为，而单元测试正是 Rust 中 \texttt{assert} 系列宏的主要用途之一。
+既然我们已经对 Rust 的安全模型有了完整的认识，下面来看看它对我们设计程序的方式会产生哪些影响。
+\section{改变我们编写代码的方式}
+Rust 新手——尤其是来自 C++ 等语言的人——在试图让自己的第一批程序通过编译器严格校验时，常常会经历一段挫败期。这段经历被称为“与借用检查器搏斗”，正因如此，许多人认为 Rust 的学习曲线相当陡峭。
+本节中，我们将考察一些会导致与编译器长时间争执的写法，以及如何避免它们。这并不是说这些写法本质上不好，只是说最好在对这门语言足够熟悉之后再用它们。
+\subsection{避免在结构体中存放引用}
+\label{idx:idx_9f1a6d48}
+正如前面所见，只要结构体内用到引用，我们就必须为它显式指定生命周期标注。由于生命周期标注被视为泛型，它会成为该结构体类型签名的一部分。这会产生级联效应：往一个结构体里添加单个引用，就可能要求给好几个其他结构体及其使用处都加上生命周期标注。
+Rust 开发者也许会在某个时候找到这个问题的解决方案，但在那之前，最好在非常熟悉生命周期用法之前，避免在结构体中存放引用。虽然这可能会因不必要的拷贝而拖慢程序，但对 Rust 新手来说，先让程序能编译、能运行起来、从而释放 Rust 安全检查带来的好处，是更重要的。第二步，我们可以按需做性能分析，让程序变得更快。
+\subsection{多用可复制的结构体}
+\label{idx:idx_0e4b2459}
+我们应尽可能尝试 derive 出 \texttt{Copy} trait。这能让我们更自由地移动数据，但必须谨慎行事。如果过于草率地使用 \texttt{Copy}，就可能陷入糟糕的境地。假设我们有一个实现了 \texttt{Copy} 的简单结构体，后来却需要给它添加一个不可复制的成员，这会导致大量现有代码需要修改以符合单一所有权原则。
+\label{idx:idx_b84d3ff6}
+\label{idx:idx_a34fd1ac}
+为避免这种情况，最好只对概念上属于“纯旧式数据”（plain old data），即 \textbf{POD} 的结构体使用 \texttt{Copy}。POD 源自 C++，是一个技术术语，其定义在 C++ 标准的各个修订版本中不断变化；但这里我们可以采用一个不那么正式的定义。如果某个结构体的成员都不需要构造函数或析构函数，并且我们有把握它们将来也不需要，那就应当考虑为该结构体实现 \texttt{Copy}。
+\subsection{学会不再害怕克隆}
+\label{idx:idx_77701d5f}
+借用能帮我们避免不必要的拷贝，但在 Rust 代码中，我们有时会陷入棘手的处境。当我们试图把其他语言的现有代码翻译过来时，这种情况尤其常见。如果你发现自己正在和借用检查器争执，往往一次 \texttt{clone()} 调用就能解决。
+前面考察过的原则在这里同样适用。我们不想让代码里充满不必要的拷贝，但应当先求安全，再求快。一个 Rust 程序在生产环境运行多年而不崩溃所带来的好处，往往超过性能上的小小让步。
+\subsection{用索引代替引用}
+\label{idx:idx_a166dc41}
+有一种常常让初学者栽跟头的写法，就是创建引用自身的结构体。即便在其他语言里可以这么做，在 Rust 里也绝无可能，因为 Rust 遵循单一所有权原则。要让结构体中存放的任何引用保持有效，我们必须确保被借用的数据比它的所有者活得更久；而如果持有该数据的结构体正是被拷贝的那一个，这就无法做到。就算 Rust 允许这么做，我们实际上也是在拷贝一个指向前一个所有者的指针，而它在移动之后已经不再有效。
+一旦我们想要创建自引用结构体，就必须重构它，改用其他方案。一种比较常见的尝试，是在一个结构体里存放一个元素池，同时也存放该池中的引用。这种情况下，最简单的改动就是用指向池的索引代替引用。
+\label{idx:idx_acb137f1}
+在引用类数组对象时，用索引而非借用来访问，还能帮助解决其他棘手的所有权问题。如果你卡住了、发现自己在和编译器较劲，不妨想一想能否把某些访问改成使用索引。
+\section{小结}
+本章我们考察了 Rust 安全策略的主要方面。我们了解到，Rust 中的数据同一时间只能有一个所有者，以及如何按需转移和借用所有权。我们讨论了如何提供生命周期标注来帮助编译器校验代码，也考察了运行时 panic 的本质，以理解它的恰当用法。最后，我们讨论了这一切如何协同作用，改变我们编写代码的方式。
+接下来，我们会暂时放下编程语言理论，深入探讨如何充分利用 Rust 的构建与打包工具链。
+\needspace{26\baselineskip}
+\begin{samepage}
+\subsection{获取本书的 PDF 版本及更多内容}
+扫描二维码（或访问 \texttt{packtpub.\allowbreak{}com/\allowbreak{}unlock}）。按书名搜索本书，确认版本，然后按照页面上的步骤操作。
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\emph{注：请把发票放在手边。直接从 Packt 购买无需发票。}
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\end{samepage}

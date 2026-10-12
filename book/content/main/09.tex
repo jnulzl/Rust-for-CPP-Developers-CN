@@ -1,0 +1,454 @@
+我们已经花了好几章的内容专门聚焦 Rust，但现在该重新深入 C++ 了。理想情况下，我们的所有软件都能从 Rust 的安全保证中受益，但现实是，有很多用 C 和 C++ 编写的库，我们希望把它们作为 Rust 程序的一部分来使用。又或者，我们想在另一个完全不同的编程语言生态里利用 Rust。无论我们是要用 Rust 一点点地替换掉老旧系统，还是为 Python 这样的第三种语言创建扩展，理解如何用 Rust 与其他语言交互都是一项必备技能。
+\label{idx:idx_ce031a55}
+在本章中，我们将认识 Rust 的\textbf{外部函数接口}（\textbf{FFI}）。FFI 指的是一组语言特性，它使我们能在 Rust 代码中调用来自其他语言的函数，也能让我们的 Rust 函数和数据类型被其他语言使用。
+在本章中，我们将涵盖以下主要主题：
+\begin{itemize}
+  \item Rust 与 C 之间的通信
+  \item 生成和更新绑定
+  \item C++ 绑定的策略
+  \item 有效地使用绑定
+\end{itemize}
+\section{技术要求}
+本章的示例使用 Rust 1.\allowbreak{}82.\allowbreak{}0，但它们也能在任何更新的版本上运行。如果你需要安装 Rust 方面的帮助，请参阅\emph{附录}。
+本章中的一些示例要求你的系统上安装了 SDL2 开发库。
+你可以在本书的 GitHub 仓库中找到本章的代码文件：\href{https://}{\texttt{https://}}
+\texttt{github.\allowbreak{}com/\allowbreak{}PacktPublishing/\allowbreak{}Rust-\allowbreak{}for-\allowbreak{}CPP-\allowbreak{}Developers}。
+\section{Rust 与 C 之间的通信}
+\label{idx:idx_532766c3}
+虽然我们一直在 C++ 的语境下讨论 Rust，但这两种语言之间的通信只能通过 C 的\textbf{应用二进制接口}（\textbf{ABI}）来进行。在本节中，我们将了解什么是 ABI，以及 C ABI 如何充当许多不同语言（包括 Rust 和 C++）之间的通用粘合剂。
+\subsection{理解 C ABI}
+\label{idx:idx_77b774f3}
+\label{idx:idx_eb698869}
+在 C 和 C++ 中，我们常常把源文件各自独立地编译成目标文件，再作为后处理过程把它们全部链接成一个可执行文件。要想正确地链接到一起、生成一个可运行的程序，函数的实现和对它的每一次调用都必须在参数如何传递、值如何返回上遵循同一种与架构相关的约定。即便函数的实现和对该函数的调用分散在由互相完全独立的编译器调用所生成的不同目标文件里，这一点也必须可靠地成立。
+每当编译器要生成访问结构体某个成员的代码时，都会出现类似的问题。C 编译器通常会在结构体的不同部分插入填充字节，以保证对每个成员的访问都是对齐的。编译器的每一次调用都必须理解如何在内存中排布每个结构体的数据和填充字节，这样才能一致地生成对每个成员的读和写。
+编译器所使用的\emph{调用约定}和\emph{结构体布局}是 ABI 的两个主要方面。C ABI 并没有标准化，它在不同的 CPU 架构和操作系统之间会有差异，但它足够稳定、简单且无处不在，能满足大多数跨语言通信的需求。正因如此，它已经成为若干不同编程语言在需要彼此通信时所使用的一种通用词汇。
+\label{idx:idx_77d7d6ff}
+和 C++ 一样，Rust 的编译器内置了对使用 C ABI 通信的支持。这不仅使它能与 C 代码双向通信，还能为 Python、JavaScript 等其他语言生态生成扩展和模块。虽然 Rust 原生并不支持 \emph{C++ ABI}，但我们可以利用 Rust 和 C++ 都支持 \emph{C ABI} 这一事实，在两种语言之间进行通信。
+\subsection{在 Rust 中声明与 C 兼容的结构体}
+\label{idx:idx_93fcdfe1}
+Rust 默认的结构体布局规则与 C 的有很大不同。C 着重于让程序员尽可能直接地控制内存，而 Rust 出于安全和性能的考虑，有时会在幕后选择更高效的内存布局。当我们想声明一个可用于 C ABI 的 Rust 结构体时，必须显式地标记它，以防止编译器做这类优化。Rust 提供了 \texttt{repr} 属性来指定结构体的内存布局。对于与 FFI 兼容的结构体，我们可以使用 \texttt{repr(C)} 属性：
+\begin{codebox}[rust]
+#[repr(C)]
+struct Vec3 {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+\end{codebox}
+虽然 \texttt{repr(C)} 会让结构体的布局与 C ABI 匹配，但这并不意味着每个使用该属性的结构体都能在跨语言场景下正确工作。许多 Rust 数据类型，比如 \texttt{String} 或 \texttt{Vec<T>}，在传给 C 库时毫无意义，而编译器也不会因为你使用了其中许多特性而发出警告。
+\label{idx:idx_b6eacb5d}
+编译器对这些结构体的行为表现出少见的宽松，原因在于 \texttt{repr(C)} 在 Rust 中有两种用途。第一种用途是 FFI，也是本章主要关注的。但 \texttt{repr(C)} 也可以用来告诉 Rust 编译器保持成员在内存中的顺序。由于这一特性有多种用途，编译器不能仅仅因为结构体里出现了与 FFI 不兼容的模式就发出警告或报错。
+\subsection{在 Rust 中调用 C 函数}
+\label{idx:idx_c4addb7d}
+要让 Rust 和 C 之间能够通信，双方都必须从 C ABI 的角度理解我们试图使用的函数和结构体。我们常常把那些可用于跨语言调用的定义称为\emph{绑定}，因为它们把两种语言绑定在了一起。在接下来几节中，我们将探讨为一个流行的 C 库——SDL2——创建绑定的过程，许多游戏都用它来完成图形和窗口管理任务。如果你不熟悉 SDL2，可以在 \href{https://www.libsdl.org/}{\texttt{https:/\allowbreak{}/\allowbreak{}www.\allowbreak{}libsdl.\allowbreak{}org/\allowbreak{}}} 了解更多。
+要让某个 C 函数可供 Rust 代码调用，我们用 \texttt{unsafe extern} 块来声明它。这里，我们将为初始化和关闭 SDL2 创建绑定。先来创建一个新的 crate：
+\begin{codeboxdark}
+$ cargo new bind_c_manual
+$ cd bind_c_manual
+\end{codeboxdark}
+我们希望绑定的 SDL2 函数的 C 定义如下：
+\begin{codebox}[text]
+int SDL_Init(Uint32 flags);
+void SDL_Quit(void);
+\end{codebox}
+\texttt{src/main.rs} 中对应的 Rust 绑定看起来会是这样：
+\begin{codebox}[rust]
+#[link(name = "SDL2")]
+unsafe extern "C" {
+    fn SDL_Init(_: u32) -> i32;
+    fn SDL_Quit();
+}
+\end{codebox}
+\label{idx:idx_1465dbd8}
+在我们成功调用任何外部函数之前，必须先以某种方式告诉链接器导入这些函数所在的库。\texttt{\#[\allowbreak{}link(\allowbreak{}name =\allowbreak{} "SDL2")\allowbreak{}]\allowbreak{}} 属性做的正是这件事。它告诉 Rust 在 \texttt{link} 阶段加入 SDL2 库，这样在生成最终可执行文件时就能用到它的函数。
+\begin{myNotic}{注意}
+要成功使用 \texttt{link} 属性，需要用户系统上全局安装了相应的开发库。因此，它未必能为你的 crate 的所有用户提供最好的体验，在某些平台（比如 Windows）上甚至完全无法工作。我们将在本章后面探讨其他链接方式。
+\end{myNotic}
+再看一下我们的代码示例，\texttt{unsafe extern "C"} 块告诉 Rust 编译器：它内部定义的函数必须使用符合我们目标平台 C ABI 的调用约定。在这里，\texttt{unsafe extern} 中的 \texttt{unsafe} 部分意味着编译器无法保证我们敲进去的定义会与我们想要使用的库相匹配，也无法保证它们在运行时能正确工作。这个块里的函数也默认是 \texttt{unsafe} 的，也就是说，调用它们需要特殊的 \texttt{unsafe} 标注。
+让我们在 \texttt{main} 函数里调用 SDL 的启动和关闭函数，只是看看我们能否调用到 C 代码：
+\begin{codebox}[rust]
+fn main() {
+    unsafe { SDL_Init(0) };
+    unsafe { SDL_Quit() };
+}
+\end{codebox}
+如果成功链接到了 SDL 库，我们的程序就能顺利构建并运行。遗憾的是，这个程序目前还不会做任何有趣的事。让我们扩展示例，绑定足够的 SDL 功能来创建一个窗口：
+\begin{codebox}[rust]
+use std::ffi::c_char;
+#[repr(C)]
+struct SDL_Window([u8; 0]);
+unsafe extern "C" {
+    fn SDL_CreateWindow(
+        title: *const c_char,
+        x: i32, y: i32,
+        w: i32, h: i32,
+        flags: u32,
+    ) -> *mut SDL_Window;
+    fn SDL_Delay(ms: u32);
+    fn SDL_DestroyWindow(window: *mut SDL_Window);
+}
+\end{codebox}
+\label{idx:idx_d4523a69}
+这里对 \texttt{SDL\_Window} 的定义在 Rust 中是一个零大小类型。这之所以能成立，只是因为
+\texttt{SDL\_Window} 是一个\emph{不透明类型}（opaque type），也就是说，它的内容在原 C
+库中被有意隐藏了。\texttt{window} 句柄只是作为指针传来传去，因此我们可以在 Rust 绑定里用一个零大小数组把它标记为不透明类型。
+注意，我们能够从 \texttt{std::ffi} 模块引入辅助类型 \texttt{c\_char}。这个模块包含若干与对应 C 类型直接匹配的 Rust 类型。虽然在很多情况下我们也可以使用对应的 Rust 类型，但在无法假设所有架构都采用一致位宽的场景下，\texttt{std::ffi} 中的类型更具可移植性。
+有了这些可用的绑定，我们现在就可以在程序里做点有意思的事情了。下面把 \texttt{main()} 函数替换为以下代码：
+\begin{codebox}[rust]
+let name = c"Hello World";
+unsafe {
+    SDL_Init(0);
+    let window = SDL_CreateWindow(name.as_ptr(), 0, 0, 320, 200, 0);
+    SDL_Delay(2000);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+}
+\end{codebox}
+\label{idx:idx_08960b41}
+Rust 贴心地提供了 \texttt{c""} 语法，用于创建 \texttt{\&\allowbreak{}std::\allowbreak{}ffi::\allowbreak{}CStr} 类型、与 C 兼容的零结尾字符串。我们必须把指向该字符串的指针传入外部函数，所以要调用 \texttt{.as\_ptr()} 把 \texttt{CStr} 引用转换为指针。由于外部函数是不安全的，我们可以把它们全部放在一个 \texttt{unsafe} 块里调用。
+假设 SDL2 在我们的系统上工作正常，生成的可执行程序会在桌面上弹出一个很小的窗口，两秒后退出。当然，只要我们愿意绑定更多函数，就能用 SDL 做很多更有意思的事情，但像之前那样一直手工做下去既枯燥又容易出错。好在还有别的选择，不过首先，我们来看看把一个 Rust 函数链接进 C 程序的情形。
+\subsection{把 Rust 函数暴露给 C}
+\label{idx:idx_3db74c77}
+到目前为止，我们关注的都是如何从 Rust 调用 C 函数，但其实我们同样可以在 C 程序里调用 Rust 函数。下面先用 Cargo 创建一个新的库项目：
+\begin{codeboxdark}
+$ cargo new --lib from_c
+$ cd from_c
+\end{codeboxdark}
+现在，我们可以对 Cargo 生成的默认 \texttt{add} 函数做点修改，把它暴露给 C 程序：
+\begin{codebox}[rust]
+#[unsafe(no_mangle)]
+pub extern "C" fn add(left: u64, right: u64) -> u64 {
+    left + right
+}
+\end{codebox}
+与 C++ 很像，Rust 编译器默认会生成\emph{经过名称修饰}（mangled）的符号名，其中编码了关于该定义的信息。这些定义与 C 不兼容，因此我们必须用 \texttt{\#[\allowbreak{}unsafe(\allowbreak{}no\_\allowbreak{}mangle)\allowbreak{}]\allowbreak{}} 属性关闭名称修饰，这样符号在链接到 C 程序时才能被找到。通过使用 \texttt{extern "C"}，我们告诉编译器这个函数采用 C 调用约定。
+\label{idx:idx_9670bdcb}
+Rust 库 crate 默认在构建时会生成一种特殊的静态库，称为 \texttt{rlib}。\texttt{rlib} 格式含有供 Rust crate 之间链接使用的额外信息，但 C 工具链无法理解它。要把函数链接进 C 程序，我们必须让链接器改为生成与 C 兼容的静态库或动态库。为此，需要在 \texttt{Cargo.toml} 中加上一个 \texttt{[lib]} 段：
+\begin{codebox}[rust]
+[lib]
+crate-type = ["cdylib"]
+\end{codebox}
+这会生成一个共享库，之后我们就可以把它链接到 C。如果想用静态库，可以把 crate 类型改为 \texttt{staticlib}。注意 \texttt{crate-type} 是一个数组。指定多个值会让链接器为每种类型各生成一个输出。
+最后，我们还需要创建一个头文件，其中包含供 C 侧使用的函数定义。这个头文件必须放在 C 编译器能看到的地方。我们把它命名为 \texttt{from\_c.h}，并放到 crate 的根目录下：
+\begin{codebox}[text]
+#include "stdint.h"
+extern uint64_t add(uint64_t left, uint64_t right);
+\end{codebox}
+现在，我们还可以在 crate 根目录下放一个 C 程序，用来测试一切是否正常。把它命名为 \texttt{test.c}：
+\begin{codebox}[text]
+#include <stdio.h>
+#include "from_c.h"
+int main() {
+  uint64_t sum = add(5, 6);
+  printf("sum is: %zu\n", sum);
+  return 0;
+}
+\end{codebox}
+\label{idx:idx_0d227dca}
+使用你选择的编译器进行编译。在 Linux 上，用 \texttt{clang} 时，下面这条命令会编译我们的测试程序：
+\begin{codeboxdark}
+$ clang -o test -L ./target/debug/ -lfrom_c --Wl,-rpath=target/debug test.c
+\end{codeboxdark}
+在 Windows 上使用 MSVC 目标时，我们需要链接几个系统库，并加上 \texttt{.exe} 扩展名：
+\begin{codeboxdark}
+$ clang -o test.exe -L .\target\debug\ from_c.dll.lib -lws2_32 -luserenv -lntdll
+test.c
+\end{codeboxdark}
+运行生成的 C 程序，我们看到了预期的输出：
+\begin{codeboxdark}
+sum is: 11
+\end{codeboxdark}
+到目前为止的所有示例中，有一点很清楚：要把两种语言链接在一起，每个函数或结构的定义都必须有两份独立的副本。由于每个定义在 C 侧和 Rust 侧的两份副本必须完全一致，一旦有任何改动，我们就不得不手工同步更新这两份定义，这个任务既讨厌又容易出错。下一节将探讨如何通过从 C 源代码自动生成 Rust 绑定来解决这个难题。
+\section{生成和更新绑定}
+\label{idx:idx_efd92b00}
+\label{idx:idx_2e7b7787}
+在\emph{第 4 章}中，我们学过 crate 可以指定一个 \texttt{build.rs} 文件，用于支持 Cargo 通常不覆盖的构建操作，例如生成 Rust 代码、编译非 Rust 代码，或把额外的库链接进 Rust 程序。在探索如何自动生成 C 代码绑定时，我们就需要借助这些能力。
+\subsection{用 bindgen 让绑定保持最新}
+\label{idx:idx_9d545dee}
+当某个 C 库和它的 Rust 绑定因为某种原因不再匹配时，我们的 Rust 程序就会开始报错或崩溃。如果你没有意识到问题所在，这类问题排查起来会非常令人头疼。正因如此，通常最好不要像上一节那样把绑定写死。相反，我们可以从 C 头文件自动生成绑定，确保它们正确匹配。
+\label{idx:idx_ebdf56d5}
+好在有一些 crate 能帮我们完成这项任务。其中，\texttt{bindgen} crate 就是专为在 \texttt{build.rs} 中使用、为 C 代码生成 Rust 绑定而设计的。当我们在项目里引入某个 crate 专门是为了在 \texttt{build.rs} 中使用时，它就叫\textbf{构建依赖}（build dependency）。下面创建一个新 crate，并用 \texttt{cargo add} 把 \texttt{bindgen} 加为构建依赖：
+\begin{codeboxdark}
+$ cargo new bind_c_bindgen
+$ cd bind_c_bindgen
+$ cargo add bindgen --build
+\end{codeboxdark}
+提供绑定的 crate 通常会把目标库直接嵌入到自己的目录树中。这样能让绑定的构建以及库本身的构建在不同系统之间都更简单、更可靠。我们可以用下面这一条命令，一步把 SDL2 源码树嵌入到 crate 中：
+\begin{codeboxdark}
+$ curl -L https://github.com/libsdl-org/SDL/releases/download/release-2.30.9/
+SDL2-2.30.9.tar.gz | tar xz
+\end{codeboxdark}
+这样就会在 crate 的根目录下得到一个名为 \texttt{SDL2-2.30.9} 的文件夹。
+\label{idx:idx_e0641b5a}
+要使用 \texttt{bindgen}，通常第一步是在 crate 内创建一个本地的 C 头文件，用它来包含我们希望为其生成绑定的那些头文件。并非一定要自己创建本地头文件，但它能简化绑定和构建脚本的管理。我们把这个头文件命名为 \texttt{wrapper.h}，同样放在 crate 根目录下。最初的 \texttt{wrapper.h} 文件很简单：
+\begin{codebox}[text]
+#include "SDL2-2.30.9/include/SDL.h"
+\end{codebox}
+有了这个 wrapper 之后，crate 根目录下的 \texttt{build.rs} 脚本就像这样：
+\begin{codebox}[rust]
+use std::path::PathBuf;
+fn main() {
+    let bindings = bindgen::Builder::default()
+        .header("wrapper.h")
+        .parse_callbacks(
+             Box::new(bindgen::CargoCallbacks::new()))
+        .generate()
+        .expect("Unable to generate bindings");
+    let out_path = PathBuf::from(
+        std::env::var("OUT_DIR").unwrap());
+    bindings
+        .write_to_file(out_path.join("bindings.rs"))
+        .expect("Couldn't write bindings");
+}
+\end{codebox}
+这会创建一个 \texttt{bindgen::\allowbreak{}Builder} 实例，并把我们的 wrapper 头文件指定为输入。在幕后，\texttt{parse\_\allowbreak{}callbacks} 函数还会配置 Cargo，使得当 \texttt{wrapper.h} 文件发生变化时重新生成绑定。
+绑定成功生成后，我们会查询由 Cargo 自动定义的环境变量 \texttt{OUT\_DIR}，以确定绑定应该写到磁盘的什么位置。如果写入绑定成功，构建脚本就成功结束。
+\label{idx:idx_025c90a1}
+现在我们可以运行 \texttt{cargo build} 来生成绑定。如果愿意，你可以查看生成的
+target 文件夹里的 \texttt{bindings.rs} 文件。但此时，这些绑定
+只不过是散落在文件系统上的一个 Rust 源文件。我们需要以某种方式把它们导入 crate。我们要找的是 Rust 的 \texttt{include!} 宏，它只是把一个源文件插入另一个源文件，和 C++ 的 \texttt{\#include} 很像。在 \texttt{src/main.rs} 里，我们可以加入以下几行：
+\begin{codebox}[text]
+#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+\end{codebox}
+Rust 默认对类型、变量和函数的大小写约定十分讲究，但很少有 C 代码会遵循这些约定。因此，我们使用属性来为 crate 关闭这些编译器警告。使用 \texttt{\#[]} 语法的属性作用于源文件中的下一个条目，而使用 \texttt{\#![]} 语法的属性则作用于整个 crate。
+\texttt{include} 本身用到了 \texttt{concat!} 和 \texttt{env!} 这两个辅助宏。它们分别在编译期拼接字符串、查找环境变量。正如 Cargo 在编译构建脚本时定义了
+\texttt{OUT\_DIR} 环境变量一样，在编译
+crate 的其余部分时它同样也有定义。
+现在，绑定已经可以在 crate 中完全使用了。但要真正用上它们，我们还必须先重新审视如何把 C 库链接进 crate。
+\subsection{编译和链接 C 库}
+\label{idx:idx_685c9210}
+\label{idx:idx_3a02b707}
+之前手工创建绑定时，我们用 \texttt{\#[link]} 属性引入系统库。这对 crate 的使用者来说有几个缺点，因为它要求系统上安装好对应的开发库。这意味着，如果开发者碰巧不满足这些要求，尝试使用我们 crate 时就会遇到令人困惑的构建错误。此外，在 Windows 等平台上，开发库没有集中的存放位置，导致依赖 \texttt{\#[link]} 属性的 crate 对许多开发者来说根本无法使用。
+\label{idx:idx_1941ba74}
+\label{idx:idx_7d59757b}
+我们已经迈出了解决这个问题的第一步，也就是把想要绑定的库的源码直接嵌入到 crate 中。这样我们就能从 C 头文件生成绑定，但库本身的链接又该怎么办呢？
+在\emph{第 4 章}中，我们简单看过如何通过 \texttt{build.rs} 使用 \texttt{cc} crate 把 C 代码链接进程序。这对小型库来说很好用，但 SDL2 是一个由多个 C 源文件构成的复杂库。逐个列出所有源文件可能很枯燥，而且每当我们升级所绑定的 C 库时，都有把它搞坏的风险。
+\label{idx:idx_5bf2eb78}
+Rust 社区创建了几个 crate 来缓解这些问题，你可以在 \texttt{crates.io} 网站的 \textbf{Build Utils} 分类中浏览它们。Rust 社区支持许多不同的构建与包管理工具，但由于 SDL 提供了面向 CMake 构建生成程序的配置，我们先来看看 \texttt{cmake} crate。和其他的构建依赖一样，可以这样把它加入到 crate 中：
+\begin{codeboxdark}
+$ cargo add cmake --build
+\end{codeboxdark}
+然后在 \texttt{build.rs} 文件中加入以下几行，只要开发系统上安装了 CMake，就能编译这个库：
+\begin{codebox}[rust]
+let dst = cmake::Config::new("SDL2-2.30.9")
+    .profile("Release")
+    .define("SDL_SHARED", "OFF")
+    .define("SDL_STATIC", "ON")
+    .define("SDL_MAIN_HANDLED", "ON")
+    .build();
+println!(
+    "cargo:rustc-link-search=native={}",
+    dst.join("lib").display()
+);
+if cfg!(target_os = "windows") {
+    println!("cargo:rustc-link-lib=static=SDL2main");
+    println!("cargo:rustc-link-lib=static=SDL2-static");
+} else {
+    println!("cargo:rustc-link-lib=static=SDL2");
+}
+\end{codebox}
+\label{idx:idx_c5ea0774}
+\label{idx:idx_02c170ed}
+我们先把包含 SDL2 源码的文件夹名传给 \texttt{Config::new}，然后开始传入各种配置选项。这里我们选择构建 SDL2 库的发布版本，无论我们的 crate 是以 \texttt{Debug} 还是 \texttt{Release} 模式构建。其余那些预处理器定义是为了把 SDL2 作为静态库链接，这样 crate 的使用者就不必依赖在系统上安装动态库来运行程序。
+构建脚本里打印字符串看起来可能有些奇怪，但这是我们向 Cargo 传达信息的方式，它可能需要这些信息来正确配置构建。Cargo 执行构建脚本时，会在其输出里搜索几个特定的字符串。这里，我们把 CMake 构建步骤的输出文件夹加入链接器的库搜索路径，并按目标操作系统的要求链接额外的库。通常这些打印工作由 crate 自己完成，我们无需操心，但 \texttt{cmake} crate 没有选择这么做，反而要求我们手动指定希望链接的内容。传给 \texttt{cmake} crate 的具体配置会因库而异，而且常常需要根据我们针对哪个平台构建而变化。要打造一套对所有用户和平台都能轻松工作的健壮绑定，可能需要相当多的工作。对许多平台而言，我们这里看到的一小段代码还不足以提供一个完整可用的 crate。完整示例可以在 \texttt{crates.io} 上的 \texttt{sdl2} crate 里找到。
+\label{idx:idx_9bd5fe86}
+\label{idx:idx_873f082d}
+这就引出了关于创建 C 绑定的最后一点：虽然理解在需要时如何创建绑定很重要，但一定要先四处看看你所使用的 C 库是否已经有合适的绑定。社区通常遵循一个约定：把原始绑定作为带有 \texttt{-sys} 后缀的库发布，而构建在这些绑定之上的更高层 API 往往没有这个后缀。
+至此，我们应该对使用 C ABI 非常熟悉了，但把程序扩展到使用 C++ 会带来更多挑战。下一节，我们将开始探讨如何处理外部的 C++ 函数和类。
+\section{C++ 绑定的策略}
+\label{idx:idx_2f5b8057}
+虽然 C 里有不少有用的库，但我们也很可能遇到想在 Rust 程序里使用的 C++ 代码，尤其是在试图把某个 C++ 程序一点一点地转换成 Rust 时。遗憾的是，Rust 并不直接支持 C++ ABI，所以我们必须寻找策略，让 C++ 代码通过 C ABI 来中转，从而创建绑定。好在 Rust 社区为解决这个问题投入了大量思考，给我们提供了若干可选方案。
+在本节中，我们将用 \texttt{toml++} 库来演示创建 C++ 绑定的不同方案。虽然 Rust 已经有一个出色的解析 TOML 格式的 crate，但这个库是个很好的例子，因为它是单头文件，很容易加到示例项目中。该库的地址是 \href{https://github.com/}{\texttt{https:/\allowbreak{}/\allowbreak{}github.\allowbreak{}com/\allowbreak{}}}
+\texttt{marzer/\allowbreak{}tomlplusplus}。
+\subsection{手工创建绑定}
+\label{idx:idx_d6287152}
+如果我们只需要绑定一小段相对简单的 C++ 代码，那么手工创建绑定可能是最直接的做法。
+为此做准备，我们先创建一个新 crate 并下载 \texttt{toml++} 头文件：
+\begin{codeboxdark}
+$ cargo new bind_cpp_manual
+$ cd bind_cpp_manual
+$ curl -O https://raw.githubusercontent.com/marzer/tomlplusplus/v3.4.0/toml.hpp
+\end{codeboxdark}
+手工绑定策略的核心，是利用 C++ 的
+\texttt{extern "C"} 功能，为我们的 C++ 代码创建一个 C API。在这个示例中，我们只为库中
+\label{idx:idx_04a71979}
+足以解析 TOML 文件的那部分创建绑定。为此，我们在 crate 根目录下创建一个 \texttt{api.cpp} 文件，内容如下：
+\begin{codebox}[rust]
+#include "toml.hpp"
+extern "C" void *toml_parse_file(const char *path) {
+    toml::parse_result result = toml::parse_file(path);
+    if (result) {
+        return new toml::table(std::move(result).table());
+    } else {
+        return nullptr;
+    }
+}
+extern "C" void toml_free_table(void *tbl) {
+    delete static_cast<toml::table*>(tbl);
+}
+\end{codebox}
+要编译这段代码，接下来必须把 \texttt{cc} crate 加为 \texttt{build} 依赖：
+\begin{codeboxdark}
+$ cargo add cc --build
+\end{codeboxdark}
+然后，在 \texttt{build.rs} 文件中加入以下内容：
+\begin{codebox}[rust]
+fn main() {
+    cc::Build::new()
+        .cpp(true)
+        .std("c++17")
+        .define("TOML_EXCEPTIONS", "0")
+        .file("api.cpp")
+        .compile("api");
+}
+\end{codebox}
+\label{idx:idx_3547395a}
+这会用合适的标志编译 \texttt{api.cpp} 文件，并生成必要的 Cargo 注解，把生成的库 \texttt{api} 链接进 crate。现在，只剩下在 Rust 侧创建 C API 并开始使用我们的函数了。由于 crate 的 \texttt{Cargo.toml} 文件里就有一个现成的 TOML 文件，我们就解析它来测试一切是否正常。最终 crate 的 \texttt{main.rs} 文件像这样：
+\begin{codebox}[rust]
+use std::ffi::{c_char, c_void};
+unsafe extern "C" {
+    fn toml_parse_file(path: *const c_char) -> *mut c_void;
+    fn toml_free_table(tbl: *const c_void);
+}
+fn main() {
+    unsafe {
+        let table = toml_parse_file(c"Cargo.toml".as_ptr());
+        if table.is_null() {
+            println!("Failed to parse TOML");
+        } else {
+            println!("Parsed TOML successfully");
+        }
+        toml_free_table(table);
+    }
+}
+\end{codebox}
+运行程序，我们如期看到了输出 \texttt{Parsed TOML successfully}。
+正如你可能从这个示例中看到的，这种做法有几个缺点。我们不仅要在本可以用 Rust 写的地方写大量 C++ 代码，还得把 C++ 的语义扭曲成 C API。这包括：在本不需要堆分配的地方使用堆分配，通过 \texttt{void} 指针传递而丢弃类型信息，以及把错误处理信息压缩进 \texttt{nullptr}。
+由于这些缺点，这种做法只适合为一小部分函数快速创建绑定。通常我们希望尽快用更健壮的方案取代它。
+\subsection{从 Rust 程序直接调用 C++}
+\label{idx:idx_02f49e5b}
+\texttt{cpp} crate 提供了一种方式，利用 Rust 宏和构建脚本自动生成 Rust 与 C++ 之间的 C ABI 绑定。这带来一个有趣的效果：把两种语言结合在同一个源文件里。下面先创建一个新 crate：
+\begin{codeboxdark}
+$ cargo new bind_cpp_macros
+$ cd bind_cpp_macros
+$ cargo add cpp
+$ cargo add cpp_build --build
+$ curl -O https://raw.githubusercontent.com/marzer/tomlplusplus/v3.4.0/toml.hpp
+\end{codeboxdark}
+这会搭好 \texttt{cpp} crate 及其构建依赖，然后把 \texttt{toml.hpp} 头文件直接下载到 crate 的根目录，和上一个示例一样。
+先看看 \texttt{build.rs} 中所需的设置：
+\begin{codebox}[rust]
+fn main() {
+    cpp_build::Config::new()
+        .flag_if_supported("-std=c++17")
+        .flag_if_supported("/std:c++17")
+        .define("TOML_EXCEPTIONS", Some("0"))
+        .build("src/main.rs");
+}
+\end{codebox}
+这看起来和手工绑定示例里用的配置很像。我们以两种不同格式传入所选的 C++ 标准，以确保它在 GCC、Clang 和 MSVC 构建环境中都能工作。\texttt{cpp\_build} crate 会扫描 \texttt{main.rs} 文件里的所有 \texttt{cpp!} 宏，并自动生成所需的\emph{胶水代码}，夹在我们编写的 Rust 和 C++ 代码之间。
+\label{idx:idx_feae23f3}
+在同一个源文件里混用 C++ 和 Rust 的技巧，看到示例之前大概很难体会它的意义，所以我们来看看新的 \texttt{main.rs} 文件：
+\begin{codebox}[rust]
+use cpp::cpp;
+cpp! {{
+    #include <iostream>
+    #include "toml.hpp"
+}}
+fn main() {
+    let path = c"Cargo.toml";
+    let path_ptr = path.as_ptr();
+    unsafe {
+        cpp!([path_ptr as "const char *"] {
+            toml::parse_result result =
+                toml::parse_file(path_ptr);
+            if (result) {
+                std::cout << result << std::endl;
+            } else {
+                std::cout
+                    << "Error reading TOML file"
+                    << std::endl;
+            }
+        })
+    };
+}
+\end{codebox}
+\texttt{cpp!} 宏使用的格式在某些方面类似 Rust 闭包，但我们必须显式指定所用的 C++ 类型。尽管语法奇特，我们已经成功地把 C++ 嵌入到了 Rust crate 中。生成的 C++ 代码和前一个示例非常相似，只不过不再需要在 Rust 和 C++ 代码里都维护一套 C API，而是由构建脚本为我们生成绑定。
+\label{idx:idx_00711b01}
+\texttt{cpp} crate 并不是我们创建 C++ 绑定的唯一选择。我们用来绑定 C 的 \texttt{bindgen} crate 也支持有限的一部分 C++。流行的 \texttt{cxx} 和 \texttt{autocxx} crate 同样能让我们在 Rust 与 C++ 之间创建胶水代码。除了这些已有的 crate，新的方法还在不断涌现。如果某个特定的 crate 无法满足你项目的需求，很可能另一个可以。
+探讨完绑定 C++ 的各种策略之后，我们现在来看看如何充分发挥绑定的作用。
+\section{高效地使用绑定}
+\label{idx:idx_063f42bf}
+调用外部函数需要使用 \texttt{unsafe} 关键字，因为 Rust 编译器无法保证这些函数遵守 Rust 的安全规则。这会引入潜在风险，例如内存破坏或未定义行为，可能导致崩溃或其他 bug。为应对这一点，我们需要一套策略，在依然受益于 FFI 的同时，缓解不安全代码可能带来的风险与危害。
+不安全 Rust 代码允许执行通常不允许在 Rust 代码中进行的操作，包括解引用裸指针以及访问 union 的字段。虽然这些操作对于处理外部代码可能必不可少，但我们往往希望把它们藏在安全接口背后，以确保使用我们绑定的任何人都能在自己的代码中受益于 Rust 的编译期检查。
+我们如何为一个不安全的库创建安全接口？这个问题的答案与其说是科学，不如说是艺术，因此不同的程序员会觉得不同的方案更好。大多数情况下，我们要用安全的 Rust 模式替换 C 或 C++ 的模式。这意味着用引用或切片替换指针，用 \texttt{Option} 替换空指针，用 \texttt{Result} 替换错误处理。但即便在这个框架内，也存在大量可能的变化。拿我们前面看到的 \texttt{SDL\_\allowbreak{}CreateWindow} 调用来说，我们可以考察若干种为它创建安全包装器的可能方式。首先，创建一个供安全包装器使用的 Rust 类型：
+\begin{codebox}[rust]
+struct Window(*mut SDL_Window);
+impl Drop for Window {
+    fn drop(&mut self) {
+        unsafe {
+            SDL_DestroyWindow(self.0);
+        }
+    }
+}
+\end{codebox}
+\label{idx:idx_6b6c1116}
+我们创建了一个 \texttt{Window} 包装结构体，用来持有 SDL2 返回的 \texttt{SDL\_Window} 指针。这样我们就能限制对该指针的访问。除非把该指针标记为 \texttt{pub}，否则在模块外部对它的访问都会受到限制，从而避免把它直接暴露给代码的使用者。
+这个包装结构体还让我们可以选择使用 \texttt{impl Window} 块，为各种针对 Window 的函数提供便捷接口。我们还为这个结构体实现了
+\texttt{Drop} trait，从而确保当
+最后一个所有者离开作用域时，它的资源会被清理干净。
+我们会把对 \texttt{SDL\_\allowbreak{}CreateWindow} 的实际调用实现为 \texttt{impl Window} 块中名为 \texttt{new} 的函数。根据 SDL2 文档，创建窗口可能返回 \texttt{NULL}，此时程序员必须调用 \texttt{SDL\_\allowbreak{}GetError} 来确定错误的来源。这种行为提示我们应当以 \texttt{Result} 作为返回值，于是得到如下的函数骨架：
+\begin{codebox}[rust]
+impl Window {
+    fn new(title: &str, x: i32, y: i32, w: i32, h: i32, flags: u32) ->
+Result<Window, String> {
+        todo!();
+    }
+}
+\end{codebox}
+从之前的示例我们已知，\texttt{SDL\_\allowbreak{}CreateWindow} 以 C 风格字符串接收窗口标题，但在我们的安全接口里，我们把它暴露为 Rust 的 \texttt{\&str} 类型。这要求我们在函数内部做一些转换，但为 Rust 用户提供了一个安全而熟悉的 API。这个函数的实现最终主要就是字符串转换：
+\begin{codebox}[rust]
+let title = CString::new(title).unwrap();
+let window_ptr = unsafe {
+    SDL_CreateWindow(title.as_ptr(), x, y, w, h, flags)
+};
+if window_ptr.is_null() {
+    let err = unsafe {
+        CStr::from_ptr(SDL_GetError()).to_bytes()
+    };
+    let err = unsafe {
+        String::from_utf8_unchecked(err.to_vec())
+    };
+    return Err(err);
+}
+Ok(Window(window_ptr))
+\end{codebox}
+\label{idx:idx_25139128}
+从 Rust 字符串转向 C 字符串时，我们多半得用 \texttt{std::\allowbreak{}ffi::\allowbreak{}CString}；而从 C 字符串转向 Rust 字符串时，我们通常可以用 \texttt{std::\allowbreak{}ffi::\allowbreak{}CStr}。它们大致分别对应 Rust \texttt{String} 和 \texttt{\&str} 类型的 C 风格版本：\texttt{CString} 的行为像是拥有所有权的类型，\texttt{CStr} 的行为则像是借用的类型。从 Rust 字符串类型转到 C 风格字符串类型时，我们必须分配一个含结尾零字节的新缓冲区。而从 C 风格字符串转到 Rust 字符串时，我们只需找到结尾的零字节，并把该字节之前的所有内容当作切片即可。
+除了字符串转换之外，这个函数的其余部分应该都很直接。我们只是用传入的值调用 \texttt{SDL\_\allowbreak{}CreateWindow}，检查是否为 \texttt{null}，然后要么返回一个以 Rust \texttt{String} 类型承载 \texttt{SDL\_\allowbreak{}GetError} 值的错误，要么返回 \texttt{Window} 包装结构体的一个实例。
+\label{idx:idx_f1d6a560}
+有了这个安全接口，我们就可以用安全、地道的 Rust 重新实现前面的某个示例：
+\begin{codebox}[rust]
+let w = Window::new("Hello World", 50, 50, 320, 200, 0);
+if let Err(err) = w {
+    eprintln!("Error creating window: {}", err);
+} else {
+    unsafe { SDL_Delay(2000) };
+}
+\end{codebox}
+我们还没有包装对 \texttt{SDL\_Delay} 的调用，但如果我们要努力为整个 SDL2 库打造安全的高层绑定，大概会对这个函数以及其他函数采取同样的流程。
+\section{小结}
+在本章中，我们考察了把 C 和 C++ 代码暴露给 Rust 程序、以及把 Rust 程序反过来暴露给它们的基础知识。我们既看到了如何为 C 和 C++ 手工创建绑定，也看到了如何利用 Rust 社区提供的众多方案中的一些，来生成更完整、更可靠的绑定。
+在下一章中，我们将深入探讨如何优化 Rust 程序。
+\needspace{26\baselineskip}
+\begin{samepage}
+\subsection{获取本书的 PDF 版本及更多内容}
+扫描二维码（或访问 \texttt{packtpub.\allowbreak{}com/\allowbreak{}unlock}）。按书名搜索本书，确认版本（edition），然后按照页面上的步骤操作。
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\emph{注意：请把发票准备好。直接从 Packt 购买则无需发票。}
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\end{samepage}

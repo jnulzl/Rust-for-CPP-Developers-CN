@@ -1,0 +1,448 @@
+\label{idx:idx_58ed3d7c}
+\textbf{面向对象编程}（\textbf{OOP}）在过去几十年里一直是编程社区中非常流行的范式。若干流行语言要么明确拥抱面向对象范式，要么把自己标榜为对这些范式提供某种程度支持的“多范式”语言。
+Rust 属于后一类。在本章中，我们将了解 Rust 对面向对象的独特处理方式，看看它与 C++ 的做法有何对比，并考察它如何与 Rust 的函数式影响相结合。
+本章将涵盖以下主要主题：
+\begin{itemize}
+  \item 理解面向对象的原则
+  \item 考察 Rust 中的面向对象基础
+  \item 超越面向对象
+\end{itemize}
+\section{技术要求}
+本章的示例使用 Rust 1.\allowbreak{}82.\allowbreak{}0，但它们也能在任意更新的版本上运行。
+如果你在安装 Rust 时需要帮助，请参阅\emph{附录}。
+\section{理解面向对象的原则}
+\label{idx:idx_745a6309}
+尽管 OOP 在编程文献和讨论中几乎无处不在，但它有着许多不同的风格和流派。本节将简要回顾 C++ 中 OOP 的核心原则，以便为考察 Rust 对这些相同原则的实现打下基础。
+\emph{面向对象编程}这一术语由 Smalltalk 编程语言的设计者 Alan Kay 在 20 世纪 60 年代提出。Smalltalk 的 OOP 模型虽有其历史意义，但它在若干方面都不同于 C++ 及其许多后继语言所选择的模型。因此，OOP 很难精确定义。尽管如此，现代的大多数讨论都收敛到一小组核心原则上，本节将对这些原则进行考察。
+\subsection{抽象行为与封装数据}
+\label{idx:idx_7d72d596}
+\label{idx:idx_d7ffa318}
+OOP 的核心当然是\textbf{对象}。对象是一组状态的集合，它以某种形式向其他对象暴露一个公共接口。在 C++ 以及大多数其他现代面向对象语言中，对象之间通过调用构成对象公共\textbf{应用程序编程接口}（\textbf{API}）的\textbf{方法}或函数来交互。
+对象通常是\textbf{类}的一个\textbf{实例}。大多数讲解正是在这里拿出动物或形状的例子。\texttt{Cat} 可能是一“类”对象，但那只刚刚打翻你咖啡的俄罗斯蓝猫，则是 \texttt{Cat} 类的一个具体“实例”，它拥有独立于程序中其他所有对象的状态。
+\label{idx:idx_94f03168}
+\textbf{抽象}是 OOP 的一项核心原则，它主张对象应尽量只向其他对象暴露一小组行为，并且应始终暴露专注于类\emph{做什么}、而非类在内部\emph{如何}做的 API。这是为了降低复杂度。类的作者可以只专注于自身功能的实现，而程序中该类的任何使用者都无需理解或关注它究竟如何运作。当然，抽象在 OOP 之外也很有用，但一般公认它是 OOP 的一项核心原则。
+\label{idx:idx_3d3e492b}
+帮助我们为程序创建简单公共 API 的，是\textbf{封装}原则。这项原则关注的是用于向其他对象隐藏数据和实现细节的机制。在 C++ 中，这是通过用 \texttt{public}、\texttt{private} 和 \texttt{protected} 等访问修饰符标记结构的一部分来实现的。严格面向对象的做法可能倾向于把所有数据都标记为 private，但在公共 API 中提供若干访问器，也许像这样：
+\begin{codebox}[rust]
+class Cat {
+private:
+      Color furColor;
+public:
+      void SetFurColor(Color color) { furColor = color; };
+      Color GetFurColor() const { return furColor; }
+};
+\end{codebox}
+\label{idx:idx_e85c021b}
+\label{idx:idx_91e22270}
+初次学习 OOP 的人看到这种写法往往会却步。这不只是无谓的繁琐工作吗？为什么不能直接暴露 \texttt{furColor}，省去那些样板式的访问器代码？毕竟，C++ 给了我们灵活性，可以把一切都标记为 \texttt{public}，完全无视封装原则。这里之所以要额外费力，最常被引用的理由是：保护对象的使用者免受代码内部变动的影响。理论上，只要公共接口的功能不变，对象的底层实现及其所包含的状态就可以随意改变，而不会破坏任何与该对象交互的代码。尽管长期提供向后兼容可能存在实际顾虑，但提供一个公共 API 来访问对象的私有状态，是一种增强代码可维护性和可理解性的有用技巧。
+虽然抽象和封装构成了 OOP 核心原则的前半部分，但对许多人来说，它们也只是良好的软件工程实践。要成为一门真正面向对象的语言，还需要能让程序员在不同抽象层次上对问题进行建模，我们将在下一节看到这一点。
+\subsection{用继承和多态对问题建模}
+\label{idx:idx_9b31be70}
+在真实的程序中，我们可能希望处理对象的集合。举个例子，可以设想一个光线追踪程序。我们可能想用一条光线去追踪场景中的一组物体，就像下面这个高度简化的 C++ 示例那样：
+\begin{codebox}[rust]
+float min_distance = INFINITY;
+for (const Object& object : sceneObjects) {
+      float distance = object.intersects(ray);
+      if (distance < min_distance) {
+            min_distance = distance;
+      }
+}
+\end{codebox}
+在这个例子中，我们有一段高层代码，希望把场景中的每个对象都一视同仁地处理，但在场景里，我们可能有几种不同的对象，它们计算与光线相交的方式大相径庭。例如，光线与三角形求交，和光线与球体求交，在数学上是非常不同的两回事。
+\label{idx:idx_8cfb499d}
+\label{idx:idx_b95108a6}
+\label{idx:idx_11753229}
+\label{idx:idx_a1dce83e}
+为了以这种方式对问题建模，一门面向对象的语言必须允许我们用统一的名称和接口来指代多种具体类型，比如 \texttt{Sphere} 或 \texttt{Triangle}，而统一的名称可以是示例中这里的 \texttt{Shape} 或 \texttt{Object}。许多面向对象语言把这种能力称为\textbf{继承}。在光线追踪示例中，我们可以用继承把各个类组织成一个层级或树状结构，让 \texttt{Object} 成为场景中每个实体的基类或父类。继承是对某些问题建模的自然方式，但它并非没有缺点。有一些名字听起来很吓人的已知继承问题，比如\emph{脆弱基类问题}和\emph{菱形模式}。这里我们不去深入这些问题，只需知道它们存在，并且许多 OOP 最佳实践、乃至一些语言特性，都是围绕规避它们而设计的。就我们的光线追踪程序而言，仅仅为场景定义一套对象类型层级是不够的。我们还需要能够根据对象的具体类型（如 \texttt{Sphere} 或 \texttt{Triangle}）来特化各自的行为。而且，即使编译器在当前上下文中只知道我们在处理一个 \texttt{Object} 类、对具体类型一无所知，这种特化也必须发生。OOP 文献把这种能力称为\textbf{多态}。
+在 C++ 中，继承与多态是紧密耦合的。许多 C++ 程序员对这些细节大概已经很熟悉了，这里不深入展开，我们可以像这样定义\textbf{基类}：
+\begin{codebox}[rust]
+class Object {
+public:
+      virtual float intersects(const Ray& ray) const = 0;
+};
+\end{codebox}
+\label{idx:idx_77fa9122}
+这告诉我们，用 C++ 的话说，\texttt{intersects} 方法是\emph{纯虚函数}，也就是说基类中不存在任何实现。C++ 中的 \texttt{virtual} 方法，是我们可以、甚至应当用更具体的实现来重写的方法。
+派生类（即子类）\texttt{Triangle} 可能看起来像这样：
+\begin{codebox}[rust]
+class Triangle : public Object {
+public:
+      float intersects(const Ray& ray) const override;
+};
+\end{codebox}
+\label{idx:idx_ff6b2e3e}
+在这种设置中，多态是通过一张运行时的函数指针表来实现的，这张表称为\textbf{虚表}。在构造时，每个对象都会存下一个指向其所属类虚表的指针。当我们通过 \texttt{Object} 调用 \texttt{intersect} 方法时，编译器会生成代码，去查该对象的虚表，并取出指向 \texttt{Triangle::\allowbreak{}intersect(\allowbreak{})\allowbreak{}} 方法的指针——如果我们的
+\texttt{Object} 恰好是一个 \texttt{Triangle}，或者如果我们的对象是一个 \texttt{Sphere}，就取出 \texttt{Sphere::\allowbreak{}intersect} 方法，
+其他所有子类型也以此类推。
+\label{idx:idx_82e0f2ca}
+\label{idx:idx_a130bafa}
+这种功能通常被称为\textbf{动态分派}。这里的“分派”就是调用函数的意思。动态分派要求在运行时查找函数的地址，会付出一点性能代价；而\textbf{静态分派}指的是更为常见的情况，即编译器在编译期就知道函数调用的地址。
+我们在这里考察的四项原则——抽象、封装、继承和多态——构成了 OOP 方法论的核心。带着这四项原则，我们接下来开始考察 Rust 对面向对象的处理方式，以及它与 C++ 有何不同。
+\section{考察 Rust 中的面向对象基础}
+\label{idx:idx_fbe88e4d}
+\label{idx:idx_7f427ab0}
+Rust 对面向对象的处理方式可以看作非常不传统。Rust 的设计者并没有对 C++ 式的面向对象做一次带有小幅调整的直接重新实现，而是选择在这门语言的核心安全与性能目标的语境下，重新思考面向对象的概念。
+本节将更深入地探讨面向对象在 Rust 中意味着什么，以及那些熟悉的面向对象概念是如何用它的语言特性来表达的。
+\subsection{实现与数据可见性}
+\label{idx:idx_f5d18fb3}
+如前所述，抽象和封装除了是 OOP 的核心信条外，也是良好的通用软件工程原则。Rust 支持数据隐藏和指定公共 API，但从 C++ 转过来的你可能会发现，它的运作方式与预期不同。
+在 Rust 中，一切默认都是私有的，但它并不是像 C++ 类那样对结构体本身私有，而是对我们所处的\emph{模块}私有。这意味着模块中任何其他函数或结构体都能看到、并可能直接操作我们结构体的字段，而在 C++ 中要做到这一点通常需要使用 \texttt{friend} 关键字。
+OOP 纯粹主义者可能会对此感到意外，但它代表了纯粹性与实用性之间的平衡。Rust 中的模块用于把相关的代码和数据归拢在一起，而不是用来表示某一个特定的结构体。如果我们想追求严格的纯粹性，也完全可以为每个结构体使用一个模块。
+在 Rust 中，把东西设为公有要用到 \texttt{pub} 关键字。它可以出现在各种不同的上下文中。
+要让一个结构体在模块外可见，我们给它加上 \texttt{pub} 关键字：
+\begin{codebox}[rust]
+#[derive(Copy, Default)]
+struct Color(u32);
+pub struct Cat {
+      fur_color: Color,
+}
+\end{codebox}
+\label{idx:idx_428b2ff7}
+我们也可以用类似的方法把结构体的单个成员设为公有：
+\begin{codebox}[rust]
+pub struct Cat {
+      pub fur_color: Color,
+}
+\end{codebox}
+这会让模块外的代码可以看到 \texttt{fur\_color} 成员并直接读写它。可以只把 \texttt{fur\_color} 设为公有，而不把 \texttt{Cat} 本身设为公有。当需要从子模块或测试中访问它、又不想把该类型暴露为模块公共 API 的一部分时，这种做法很有用。
+当然，我们也可以把方法和函数设为公有，从而把它们暴露到模块之外。这里我们来看一个这样做的方法，但用法对自由函数来说是完全相同的：
+\begin{codebox}[rust]
+impl Cat {
+      pub fn get_fur_color(&self) -> Color {
+            self.fur_color
+      }
+}
+\end{codebox}
+即使整个结构体不是公有的，方法也可以是公有的，原因与前面描述的测试和子模块相关。让我们通过一个典型的测试设置来看一个实际例子：
+\begin{codebox}[rust]
+#[derive(Default)]
+struct Cat {
+      pub fur_color: Color,
+}
+#[cfg(test)]
+mod tests {
+      use super::*;
+      #[test]
+      fn default_color_is_black() {
+            let cat = Cat::default();
+            assert_eq!(cat.fur_color.0, 0);
+      }
+}
+\end{codebox}
+\label{idx:idx_64b64821}
+在这个例子中，我们之所以能在测试中直接访问 \texttt{fur\_color}，是因为它被标记为了
+\texttt{pub}。但我们没有把 \texttt{Cat} 结构体标记为公有，因此它无法在
+模块之外可见。
+trait 定义也可以设为公有，以确保它们在当前模块之外可见。注意，如果 trait 是公有的，那么属于该 trait 的关联函数就被视为公有，无需任何额外的标记。trait 中的条目始终共享其 trait 的可见性：
+\begin{codebox}[rust]
+pub trait Meows {
+      fn say_meow();
+}
+\end{codebox}
+最后，\texttt{pub} 关键字的另一种用法是把模块本身声明为公有，从而让它所有的公有条目也相继可见：
+\begin{codebox}[rust]
+mod a {
+    pub mod b {
+        pub fn c() {
+        }
+    }
+}
+\end{codebox}
+\label{idx:idx_c8c36d85}
+把模块 \texttt{b} 声明为公有后，我们就能在导入了模块 \texttt{a} 的代码中访问它。例如，我们可以这样调用函数 \texttt{c}：\texttt{a::b::c()}。
+Rust 的可见性和模块系统提供了足够的灵活性，可以实现强有力的数据隐藏保证，从而满足传统 OOP 的抽象和封装目标。下一节将考察 Rust 如何处理继承。
+\subsection{组合优于继承}
+\label{idx:idx_f4c09b59}
+我们说过，Rust 的设计是对核心 OOP 原则的重新构想，而不是对 C++ 特定诠释的照搬。这一点在 Rust 对继承的处理上体现得最为淋漓尽致。基本上，Rust 中根本没有继承。那我们还能把 Rust 称为面向对象的语言吗？在下结论之前，我们先考察一下继承实际上是如何被使用的。
+\label{idx:idx_94ffe9f6}
+传统继承定义的是\emph{是一个}（is a）关系，我们从较不具体的事物走向更具体的事物。矩形\emph{是一个}形状，或者猫\emph{是一个}动物。更具体的类型会继承其更一般类型的所有属性，同时还会添加反映自身独特性的特殊属性。有一条名为\textbf{里氏替换原则}的原则把这一思想形式化，它指出：使用较不具体的父类型的程序，应当能够在不改变程序行为的前提下替换为其任意一个更具体的子类型。
+除了\emph{是一个}关系之外，C++ 中的继承还用于为若干不同的类指定一个共同的接口去遵循。每个子类型都从定义该接口的类继承，正如我们之前在光线追踪示例中看到的那样。这往往更多是出于实用性考虑，而非严格的 OOP 设计。与其说子类\emph{是一个}父类的类型，我们更倾向于说子类\emph{实现了}父类的接口。
+那么，在 Rust 中没有继承的情况下，我们要如何表达这些概念呢？在 Rust 的文献中，很难绕开“组合优于继承”这个说法。Rust 希望我们的结构体是“由”各个部分组合而成的，也就是说，每一部分都被显式地添加为结构体的一个成员。采取这一立场后，Rust 避开了若干传统的继承问题，比如脆弱的基类，以及多继承中的菱形问题，同时让每个结构体所持有的状态保持显式可见。
+\label{idx:idx_b866bfbc}
+Rust 鼓励我们不要从继承关系的角度去思考问题，而是从状态和行为的视角去思考。我们可以把前面提到的继承用途归纳为两类。\emph{是一个（is a）}关系可能要求我们同时考虑状态和行为，而\emph{实现（implements）}关系则只需考虑行为。在遵循组合优于继承这一原则时，我们希望基类型的状态以结构体的形式暴露出来，而把共享的行为单独做成一个 trait。要想把这一点看清楚，需要举个例子，所以下面让我们回到经典的面向对象示例——动物。
+C++ 中的 \texttt{Animal} 基类可能看起来像这样：
+\begin{codebox}[rust]
+class Animal {
+      std::string m_name;
+public:
+      const std::string& GetName() const { return m_name; }
+      void SetName(const std::string& name) { m_name = name; }
+};
+\end{codebox}
+根据程序的不同，我们可能还想在这里添加其他状态，不过为了简单起见，这里只用 name。
+把这个设计翻译到 Rust 时，我们希望把状态和行为分开来考虑。作为直接翻译，我们可能会创建一个 \texttt{AnimalState} 结构体来保存数据，以及一个
+\texttt{AnimalBehavior} trait 来定义行为。这会是这样：
+\begin{codebox}[rust]
+struct AnimalState {
+      name: String,
+}
+trait AnimalBehavior {
+      fn get_name(&self)-> &str;
+      fn set_name(&mut self,name:&str);
+}
+\end{codebox}
+\label{idx:idx_b7036c75}
+如果我们想实现 \texttt{Dog} 或其他某种动物，可能看起来像这样：
+\begin{codebox}[rust]
+struct Dog {
+      animal_state: AnimalState,
+}
+impl AnimalBehavior for Dog {
+      fn get_name(&self) -> &str {
+            &self.animal_state.name
+      }
+      fn set_name(&mut self, name: &str) {
+            self.animal_state.name = name.to_string();
+      }
+}
+\end{codebox}
+我们可能会觉得前面这个设计里有大量样板代码。Rust 确实提供了减少这种开销的机制。特别是，trait 允许我们为 trait 所实现的函数指定默认实现。对于一个较大的接口，我们可以只用一两个方法就实现大部分功能，从而拿到我们的状态结构体。一个例子可能像这样：
+\begin{codebox}[rust]
+trait AnimalBehavior {
+      fn get_animal_state(&self)-> &AnimalState
+      fn get_animal_state_mut(&mut self)-> &mut AnimalState;
+      fn get_name(&self)-> &str {
+            &self.get_animal_state().name
+      }
+      fn set_name(&mut self, name: &str) {
+            self.get_animal_state_mut().name = name.to_string();
+      }
+}
+\end{codebox}
+\label{idx:idx_84b1d48d}
+这大大简化了每个实现该 trait 的类型的 trait 实现，因为它只需实现两个函数，就能访问整个接口：
+\begin{codebox}[rust]
+impl AnimalBehavior for Dog {
+      fn get_animal_state(&self) -> &AnimalState {
+            &self.animal_state
+      }
+      fn get_animal_state_mut(&mut self) -> &mut AnimalState {
+            &mut self.animal_state
+      }
+}
+\end{codebox}
+\label{idx:idx_f71ce817}
+值得一提的是，在实际项目中你不太会看到大量这样写的 Rust 代码。虽然 Rust 仍然支持面向对象的写法，但由于它基于模块的数据可见性概念，以及对状态和行为更严格的分离，Rust 天生就不倾向于把它当作表示问题的方式。Rust 鼓励我们把 trait 看作一组相关行为的集合，而不是直接绑定到某类具体对象上。这里的例子主要是为了说明在 Rust 中完全可以写出更面向对象的风格，而不是建议把它当作最佳实践。
+话虽如此，面向对象这套等式里还缺一个关键部分：在 Rust 中我们如何处理多态类型？
+\subsection{Rust 的动态分派}
+\label{idx:idx_879ff879}
+从 C++ 风格的面向对象背景出发，你可能会想当然地认为：既然 Rust 不支持继承，那它肯定也不支持多态。但这个想法是不对的。继承和多态这两个概念常常被混淆，是因为在若干现代面向对象语言里它们被人为地捆绑在一起，但实际上二者可以各自独立实现，Rust 正是如此。
+\label{idx:idx_f157c90b}
+正如我们所见，Rust 对面向对象的态度关注的是事物\emph{做什么}，而不是事物\emph{是什么}，这意味着解决方案通常围绕 trait 而不是结构体来构建。多态也不例外。在 Rust 中实现多态的关键，是一个叫做 \textbf{trait 对象}的东西。如果我们有若干个实现了同一个 trait 的不同结构体，就可以把它们作为 trait 对象放进容器里，然后在运行时用动态分派来调用该 trait 的函数。
+为了把这一点讲得更清楚，我们来设计一个假想的 GUI 库。库里的每个 widget 都实现 \texttt{Widget} trait。为了简单起见，我们就假定 \texttt{Widget} trait 只包含一个用来返回 widget 二维尺寸的函数：
+\begin{codebox}[rust]
+trait Widget {
+      fn compute_size(&self) -> (u32, u32);
+}
+\end{codebox}
+接下来我们要定义一个 \texttt{Container} widget，它允许我们在其中放入一个或多个其他 widget。这里我们遇到了这样一种情况：需要引用许多可能各不相同的 widget，却不必确切了解它们到底是什么。trait 对象在这里帮我们解决了问题：
+\begin{codebox}[rust]
+struct Container {
+      children: Vec<Box<dyn Widget>>,
+}
+impl Widget for Container {
+      fn compute_size(&self) -> (u32, u32) {
+            let mut size = (0, 0);
+            for child in &self.children {
+                  let (w, h) = child.compute_size();
+                  size.0 += w;
+                  size.1 += h;
+            }
+        return size;
+    }
+}
+\end{codebox}
+\label{idx:idx_98a0ea1e}
+这里我们指定 \texttt{Container} 结构体的 \texttt{children} 成员接收一个 trait 对象的向量。我们可以用 \texttt{\&dyn Trait} 或 \texttt{Box<\allowbreak{}dyn Trait>\allowbreak{}} 来创建 trait 对象。\texttt{Box} 类型是标准库中用于在堆上分配对象的类型，有点类似于 C++ 中的 \texttt{std::\allowbreak{}unique\_\allowbreak{}ptr}。和 C++ 一样，我们要利用多态，就必须使用引用或指针。
+在内部，trait 对象是一个\textbf{宽指针}，它由一个指向对象本身的指针，和一个指向函数查找表的指针组成，后者类似于 C++ 的虚表。当我们用 \texttt{child.\allowbreak{}compute\_\allowbreak{}size(\allowbreak{})\allowbreak{}} 在对象上调用 trait 方法时，会去查这个查找表，找到要调用的函数正确实现的指针。随后我们用这个动态确定的地址来分派函数调用。我们容器所用的布局算法本身没什么道理，但作为示例效果很好。
+为了看看我们的 GUI 库实际运行的效果，我们先创建另一种 widget：
+\begin{codebox}[rust]
+struct Label {
+      text: String,
+}
+impl Widget for Label {
+      fn compute_size(&self) -> (u32, u32) {
+            (10 * self.text.len() as u32, 10)
+      }
+}
+\end{codebox}
+\label{idx:idx_78f324ad}
+同样，为了示例的需要，我们选择了一种简化的尺寸计算方式。不过既然现在我们有了不止一种 widget，就可以构造一个比较合理、能跑起来的例子了：
+\begin{codebox}[rust]
+fn main() {
+      let hello = Label { text: "Hello World!".to_string() };
+      let welcome = Label { text: "Welcome to Rust!".to_string() };
+      let mut outer = Container { children: Vec::new() };
+      let mut inner = Container { children: Vec::new() };
+      inner.children.push( Box::new(welcome) );
+      outer.children.push( Box::new(inner) );
+      outer.children.push( Box::new(hello) );
+      println!("Final size: {:?}", outer.compute_size());
+}
+\end{codebox}
+当我们调用 \texttt{outer.\allowbreak{}compute\_\allowbreak{}size(\allowbreak{})\allowbreak{}} 时，该函数会以深度优先的方式遍历我们创建的对象层级来计算尺寸，每次都动态分派 \texttt{compute\_\allowbreak{}size} trait 方法。
+\subsection{动态分派的局限}
+\label{idx:idx_9fb963b2}
+\label{idx:idx_e4ad449b}
+\label{idx:idx_edb48e35}
+关于 trait 对象还有一个最后的细微之处，那就是 \textbf{dyn 兼容性}（dyn compatibility）的概念，它以前叫做\textbf{对象安全性}（object safety）。在某些条件下，Rust 不允许把 trait 当作 trait 对象来使用。这些条件的完整列表可以在 Rust 文档中找到，不过其中有一些是频繁使用 trait 对象的人很可能会遇到的。
+首先，与 trait 相关的函数可以分为\emph{可分派}和\emph{不可分派}两类。可分派意味着编译器允许我们通过 trait 对象来调用该函数，不可分派则表示不允许。为保证 \texttt{dyn} 兼容性，trait 中的每个函数都必须是可分派的，或者被显式标记为不可分派。
+可分派的函数必须是方法。也就是说，它的第一个参数必须是 \texttt{\&self} 或 \texttt{self} 的某种变体。它也不能带有任何泛型类型参数，或返回 \texttt{Self}。trait 中所有其他函数都是不可分派的，因为编译器在动态分派它们时会遇到问题。例如，一个带泛型类型参数的函数，可能会根据它被生成时所针对的类型而有好几种不同的实现，但在我们的虚表里，trait 中的每个函数只占一个位置。我们说过，对每个函数而言，trait 要么是可分派的，要么是“显式”不可分派的。这里的显式是什么意思？Rust 给那些既想保留 \texttt{dyn} 兼容性、又想在 trait 中保留不可分派函数的程序员提供了一个逃生出口。只需添加特殊的
+\texttt{where Self: Sized} 约束。
+下面这个 trait 通常不会是 \texttt{dyn} 兼容的，因为它混用了可分派函数和隐式不可分派函数：
+\begin{codebox}[rust]
+trait DynCompatibilityTest {
+      fn dispatchable(&self);
+      fn non_dispatchable<T>(&self,value:T);
+}
+\end{codebox}
+假设你尝试用类似这样的代码把它当作 trait 对象来使用：
+\begin{codebox}[rust]
+let v: Vec<Box<dyn DynCompatibilityTest>> = Vec::new();
+\end{codebox}
+你会从编译器那里得到一条错误：
+\begin{codebox}[rust]
+error[E0038]: the trait `DynCompatibilityTest` is not dyn compatible
+\end{codebox}
+为了让这个 trait 变成 \texttt{dyn} 兼容的，我们可以给这个不可分派函数显式加上 \texttt{where Self: Sized} 约束：
+\begin{codebox}[rust]
+trait DynCompatibilityTest {
+      fn dispatchable(&self);
+      fn non_dispatchable<T>(&self, value: T) where Self: Sized;
+}
+\end{codebox}
+\label{idx:idx_6d4990ca}
+再次编译我们的测试代码，可以看到编译器这次成功了。当然，代价是我们无法再通过 trait 对象来调用 \texttt{non\_\allowbreak{}dispatchable} 方法。通过显式标记它，我们告诉了编译器：它的实现只在编译期已知，因此不应在虚表里占据条目。尽管如此，我们仍然可以用一些简单的代码尝试通过 trait 对象来调用它。
+\begin{codebox}[rust]
+let v: Vec<Box<dyn DynCompatibilityTest>> = Vec::new();
+for obj in &v {
+      obj.non_dispatchable(0);
+}
+\end{codebox}
+这会得到如下编译器错误：
+\begin{codebox}[rust]
+error: the `non_dispatchable` method cannot be invoked on a trait object
+\end{codebox}
+\texttt{dyn} 兼容性这个话题比这里的简单介绍要深入得多，我建议阅读 Rust 文档（\href{https://doc.rust-lang.org/}{\texttt{https:/\allowbreak{}/\allowbreak{}doc.\allowbreak{}rust-\allowbreak{}lang.\allowbreak{}org/\allowbreak{}}}）以获取更多信息。虽然它可能让人困惑，但这番简短介绍应该能帮你避开 Rust 新手最容易遇到的大部分相关问题。
+\label{idx:idx_f4185a83}
+在讨论过数据可见性、组合和动态分派之后，我们现在已经涵盖了面向对象的每条核心原则如何映射到 Rust。在下一节中，我们将探讨如何把 Rust 的函数式技术与面向对象技术混用起来。
+\section{超越面向对象}
+我们已经了解到 Rust 是一门多范式语言。它不仅提供了实现面向对象设计的能力，也深受函数式编程语言的强烈影响。在本节中，我们先来看看如何用 Rust 的枚举来对问题建模，然后再深入探讨如何把函数式风格与面向对象风格混用，以发挥 Rust 的多范式能力。
+\subsection{用 Rust 枚举对问题建模}
+\label{idx:idx_0730cf4d}
+\label{idx:idx_3366d536}
+\label{idx:idx_bff72047}
+实现某种多态行为的另一种非常相似的方式，是使用 Rust 的枚举。由于 Rust 中的枚举可以为每个变体包含不同的状态，它们为某些类型的问题提供了一种自然的表示方式。在函数式语言中，我们常常看到这种技术被称赞为在编译器和其它基于树的数据结构中表示\textbf{抽象语法树}（\textbf{AST}）的绝佳方式。
+虽然 Rust 的枚举为每个变体指定了不同的状态，但真正帮助我们区分行为的却是模式匹配。假设我们有一个表示某种简单结构化文本格式的枚举，如下所示：
+\begin{codebox}[rust]
+enum StructuredText {
+      Paragraph(Vec<StructuredText>),
+      Heading(String),
+      Line(String),
+}
+\end{codebox}
+那么，我们也许可以写一个函数，用模式匹配来渲染这种结构化文本：
+\begin{codebox}[rust]
+fn render_plain(structured_text: &[StructuredText]) {
+      for st in structured_text {
+            match st {
+                  StructuredText::Paragraph(children) => {
+                        print!("      ");
+                        render_plain(&children);
+                        println!();
+                  }
+                  StructuredText::Heading(text) => {
+                        println!("\n{}\n", text);
+                  }
+                  StructuredText::Line(text) => {
+                        println!("{}", text);
+                  }
+            }
+      }
+}
+\end{codebox}
+\label{idx:idx_558de397}
+\label{idx:idx_58d6c46c}
+给定一些结构化文本，这段代码会把它渲染到标准输出流。这里，我们选择对段落进行缩进，并在标题和段落之间额外插入一个换行。
+这个例子凸显了使用 Rust 枚举时的一些关键思想。我们并不是把每个变体的行为分别实现于一个公共接口之后，而是在单个函数里为每个变体实现行为。由于 Rust 中的模式匹配是穷尽的，在任何一次函数实现中被我们跳过的状态都会作为编译器错误被抛出。你也许已经能看出函数式风格与使用动态分派的面向对象式多态各自的优劣了。在面向对象风格里，我们的不同枚举变体本来会各自是独立的结构体，很可能都实现同一个 \texttt{Render} trait。然后我们会把 \texttt{Render} trait 当作 trait 对象来使用，从而以很小的运行时性能代价，动态跳转到每个结构体对应的正确实现。
+\label{idx:idx_2432ad7a}
+\label{idx:idx_4163b701}
+即使变体很多，只要每个变体都能用相对少的代码实现，使用枚举风格也有助于把实现保持得更集中。如果变体数量很少，但实现每个变体所需的代码很复杂，那么也许面向对象风格更胜一筹。归根结底，枚举风格让添加新行为只是小改动，而添加新变体则是大改动；面向对象风格则让添加新变体只是小改动，而添加新行为是大改动。好在，我们没有理由不能把枚举风格和面向对象风格混用在一起。
+\subsection{结合函数式与面向对象风格}
+\label{idx:idx_dbfcb4bd}
+假设我们想把结构化文本数据写出成许多不同的输出格式。我们将像之前一样用函数式风格来输出文本本身，但可以用 trait 对象把数据以几种不同的形式输出。首先定义一个把 \texttt{render} 函数泛化的 trait 接口：
+\begin{codebox}[rust]
+trait StructuredTextRenderer {
+      fn render(&self, structured_text:&[StructuredText]);
+}
+\end{codebox}
+现在我们可以制作其他输出格式，比如 \texttt{XMLStructuredTextRenderer}：
+\begin{codebox}[rust]
+struct XMLStructuredTextRenderer;
+impl StructuredTextRenderer for XMLStructuredTextRenderer {
+      fn render(&self, structured_text: &[StructuredText]) {
+            for st in structured_text {
+                  match st {
+                        StructuredText::Paragraph(children) => {
+                              println!("<p>");
+                              render(children);
+                              println!("</p>");
+                        }
+                        StructuredText::Heading(text) => {
+                              println!("<h1>{}</h1>", text);
+                        }
+                        StructuredText::Line(text) => {
+                              println!("{}", text);
+                        }
+                  }
+            }
+      }
+}
+\end{codebox}
+我们还会把之前的 \texttt{render\_\allowbreak{}plain} 函数包装进一个 trait 实现里：
+\begin{codebox}[rust]
+struct PlainStructuredTextRenderer;
+impl StructuredTextRenderer for PlainStructuredTextRenderer {
+      fn render(&self, structured_text: &[StructuredText]) {
+            render_plain(structured_text);
+      }
+}
+\end{codebox}
+\label{idx:idx_38c427fb}
+trait 实现都设置好之后，我们可以创建一个由装箱 trait 对象组成的数组，用来分派到合适的渲染器：
+\begin{codebox}[rust]
+fn render_all(structured_text: &[StructuredText]) {
+      let renderers: Vec<Box<dynStructuredTextRenderer>> = vec![
+            Box::new(XMLStructuredTextRenderer),
+            Box::new(PlainStructuredTextRenderer),
+      ];
+      for r in renderers {
+            r.render(structured_text);
+      }
+}
+fn main() {
+      let structured_text = vec![
+            StructuredText::Heading("Hello".to_string()),
+            StructuredText::Paragraph(vec![
+                  StructuredText::Line("This is the first line".to_string()),
+                  StructuredText::Line("This is the second line".to_string()),
+            ]),
+      ];
+      render_all(&structured_text);
+}
+\end{codebox}
+\label{idx:idx_c614a19e}
+同样，函数式方法和面向对象方法各有各的长处。你可能会自然而然地偏向其中某一种方案，但始终要记住：在情况需要时，它们可以互补地协同工作。
+\section{小结}
+在本章中，我们简要回顾了面向对象的核心原则。接着，我们看到了 Rust 如何实现、有时又如何重新诠释这些原则。最后，我们通过一些示例看到了如何把面向对象技术同 Rust 语言的其他方面结合起来。
+在下一章中，我们将探讨 Rust 与 C、C++ 互操作的种种方式。
+\needspace{26\baselineskip}
+\begin{samepage}
+\subsection{获取本书的 PDF 版本及更多内容}
+扫描二维码（或访问 \texttt{packtpub.\allowbreak{}com/\allowbreak{}unlock}）。按书名搜索本书，确认版本，然后按照页面上的步骤操作。
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\emph{注意：请保留好发票。直接从 Packt 购买的无须提供发票。}
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\end{samepage}

@@ -1,0 +1,412 @@
+\label{idx:idx_c5d289c6}
+\label{idx:idx_ccc3d5f7}
+既然已经理解了 Rust 语法和 crate 管理，现在是时候深入 Rust 标准库了。我们可以把它看作 Rust 版的 C++ \textbf{标准模板库}（\textbf{STL}）。尽管在方法上存在一些差异，但 C++ STL 和 Rust 标准库为处理各种数据结构（C++ 称之为\textbf{容器}）提供了大量相同的功能。在本章中，我们将探索 Rust 标准库中最常用的容器，并解释许多有助于更有效地使用它们的 Rust 语言与库概念。
+在本章中，我们将涵盖以下主要主题：
+\begin{itemize}
+  \item Rust 数据结构的基础
+  \item 处理带索引的数据
+  \item 使用字典类型
+\end{itemize}
+\section{技术要求}
+本章的示例使用 Rust 1.\allowbreak{}82.\allowbreak{}0，但它们也能在任何更新的版本上运行。
+如果你在安装 Rust 时需要帮助，请参阅\emph{附录}。
+\section{Rust 数据结构的基础}
+\label{idx:idx_b459d41d}
+Rust 标准库中的许多数据结构和容器都遵循一致的设计和一套相似的规则。在本节中，我们将以 Rust 对字符串（character strings）的实现为背景来探讨这些规则。Rust 中的字符串让许多新手开发者感到困惑，部分原因是标准库中有大量专用字符串类型，部分原因是它们要求开发者扎实掌握我们即将在此探讨的基础知识。学完本节，你应该能较好地理解 Rust 中的基本字符串类型，以及标准库中其他容器类型所用的模式（motif），包括它们如何处理所有权和借用。
+\subsection{Rust 中字符串的特性}
+\label{idx:idx_795e037b}
+Rust 新手开发者有时会被标准库中种类繁多的字符串类型弄得困惑不已，但每一种类型都有其特定用途。
+\texttt{String} 和 \texttt{str} 是 Rust 中的基本字符串类型，它们对所有使用标准库的程序都可用，无需任何额外的 \texttt{use} 语句。这两种类型表示以 UTF-\allowbreak{}8 格式编码的字符串。任何用无效 UTF-\allowbreak{}8 数据构造字符串的尝试都会导致错误。
+由于这些类型表示的是多字节字符编码，我们无法直接对它们进行索引来访问某个特定字符。这样做可能会让我们落在一个多字节字符的中间，从而得到无法解读的文本。因此，这些类型甚至没有提供索引操作，但却提供了种类繁多的方法来处理字符。C++ 与 Rust 字符串类型的一个显著区别是，Rust 把丰富的字符串处理 API 直接内建在其字符串类型的成员函数中，而 C++ 有时要依赖 \texttt{<algorithm>} 头文件里的泛型功能来操作字符串。
+如前所述，Rust 标准库中还散布着许多其他字符串类型。其中
+\texttt{OsString} 和 \texttt{OsStr} 类型表示一种依赖于平台的字符串编码。它们用于
+表示 \texttt{PathBuf} 和 \texttt{Path} 类型，这两个类型位于 \texttt{std::path}，为文件路径中操作系统之间的差异提供了抽象。最后，\texttt{std::ffi} 中的 \texttt{CString} 和 \texttt{CStr} 类型表示以零结尾的 C 风格字符串。
+\label{idx:idx_c2eb38e2}
+你可能会想，为什么这些类型都是成对出现的。原因是，Rust 标准库为许多数据结构同时提供了\textbf{拥有所有权}和\textbf{借用}两个版本，以帮助我们与借用检查器打交道。
+\subsection{拥有所有权的类型与借用的类型}
+\label{idx:idx_6a2446f0}
+\label{idx:idx_f1c742d0}
+Rust 标准库中的大多数容器类型都拥有所有权，但这些类型偶尔也会配上一个对应的借用类型。当我们处理字符串或类字符串数据（如文件系统路径）时，这种成对的类型通常就会出现。正如我们所见，Rust 中大多数主要的字符串类型都是「一个拥有所有权的类型 + 一个借用类型」的搭配。
+\label{idx:idx_d97cb083}
+我们可以借助 C++ 中的字符串来更好地理解拥有所有权的类型和借用的类型。毕竟 C++ 本身也有多种字符串类型。\texttt{std::string} 类型对应于 Rust 中的
+\texttt{String} 类型，它是一种拥有所有权的类型，自己管理通常位于
+堆上的内存。\texttt{std::\allowbreak{}string\_\allowbreak{}view} 类型的行为更像是借用类型，与 Rust 中的 \texttt{str} 类型极为对应。字符串视图并不拥有它们所指向的内存，因此使用时必须小心，但它们能廉价地完成若干有用的字符串操作。
+\begin{myNotic}{注意}
+借用类型在代码中几乎总是以引用的形式出现。因此在实际使用中，\texttt{str} 类型是以 \texttt{\&str} 的形式使用的。在本节讨论字符串时，谈到结构本身我们用 \texttt{str} 作为类型名；而谈到该结构的任何实例时，我们则使用 \texttt{\&str} 类型。
+\end{myNotic}
+在 C++ 中，\texttt{std::\allowbreak{}string\_\allowbreak{}view} 是在 \texttt{std::string} 之后若干年才加入的，而 Rust 中的 \texttt{String} 和
+\texttt{str} 类型从一开始就被设计为协同工作。我们会发现，在这些字符串类型所暴露的
+API 中，凡是不需要分配新内存的操作，Rust 一律返回借用的 \texttt{\&str} 类型；凡是需要分配新内存的操作，则返回拥有所有权的 \texttt{String} 类型。
+例如，\texttt{str::trim} 函数会去除字符串首尾的空白，它返回一个新的 \texttt{\&str} 类型。与 \texttt{std::\allowbreak{}string\_\allowbreak{}view} 一样，执行这一操作无需任何分配。我们可以把 \texttt{std::\allowbreak{}string\_\allowbreak{}view} 和 \texttt{\&str} 都看作「一个指向字节缓冲区的指针 + 一个存储字符串长度的整数」。裁剪字符串只需按需递增指针、递减长度即可。
+\label{idx:idx_0186ac47}
+相比之下，像 \texttt{str::\allowbreak{}replace} 这样的操作就必须分配内存来存放结果，它把已有字符串中某模式的所有出现都替换为另一个字符串。相应地，Rust 中的 \texttt{str::\allowbreak{}replace} 函数返回 \texttt{String} 类型。下面来看一个例子。为了更加清晰，类型标注虽然可选，这里仍会写出来：
+\begin{codebox}[rust]
+let literal: &'static str = "Hello world";
+let owned: String = literal.replace("Hello", "Hi");
+assert_eq!(owned, "Hi world");
+\end{codebox}
+字符串字面量具有 \texttt{\&\allowbreak{}'static str} 类型，其中 \texttt{'static} 生命周期意味着底层数据在程序的任何时刻都不会被释放。当我们要替换字符串中的数据时，别无选择，只能分配一块内存，把数据拷贝进一个拥有所有权的新类型中，然后在那里进行修改。
+\subsection{拥有所有权的类型与借用的类型之间的转换}
+\label{idx:idx_7107fef9}
+在 Rust 中，在一对拥有所有权的类型和借用的类型之间进行转换有许多方式。有人甚至会说方式多得过头了！选项之所以这么多，是因为字符串类型实现了许多不同的 trait，从而能够使用这些 trait 实现所提供的泛型函数。
+第一种方式是使用每一对类型各自专用的成员函数。\texttt{String} 类型有一个 \texttt{as\_str()} 方法，用于产生 \texttt{\&str} 类型，当然，它必须按照 Rust 的借用规则来使用。同样，\texttt{str} 有一个 \texttt{to\_\allowbreak{}string(\allowbreak{})\allowbreak{}} 方法，用于从 \texttt{\&str} 分配出一个新的 \texttt{String} 类型。使用这些方法能让代码读者清楚地看出意图，但由于它们不是泛型方法，因此与 \texttt{String} 和 \texttt{str} 类型紧密绑定：
+\begin{codebox}[rust]
+let owned: String = String::from("Hello world");
+let borrowed: &str = owned.as_str();
+\end{codebox}
+\label{idx:idx_f1c00432}
+如果我们想使用泛型方法，可以在 \texttt{String} 和 \texttt{str} 类型所实现的 trait 中考察几种选择。第一个是 \texttt{ToOwned} trait，它提供了
+\texttt{to\_owned()} 函数。\texttt{ToOwned} 由大多数借用类型实现，它返回
+被借用数据的克隆。\texttt{to\_owned()} 的返回值取决于实现它的类，但对 \texttt{str} 来说，它的行为与我们前面讨论过的 \texttt{to\_\allowbreak{}string(\allowbreak{})\allowbreak{}} 函数完全相同，返回一个 \texttt{String}：
+\begin{codebox}[rust]
+let literal: &'static str = "Hello world";
+let owned: String = literal.to_owned();
+\end{codebox}
+进入更有趣的领域，我们来看看 \texttt{From} 和 \texttt{Into} trait。这两个 trait 揭示了 Rust 标准库中用于在类型之间转换的一个重要机制。\texttt{From} trait 提供了 \texttt{from()} 函数，它接收一个值作为参数，并将其转换为我们所期望的结构。用于从 \texttt{\&str} 转换到 \texttt{String} 的 \texttt{From} trait 看起来是这样的：
+\begin{codebox}[rust]
+impl From<&str> for String {
+    fn from(s: &str) -> String {
+        s.to_owned()
+    }
+}
+\end{codebox}
+在字符串这里，这种情况常出现在从字符串字面量构造 \texttt{String} 的时候，正如前面所见，字符串字面量具有 \texttt{\&\allowbreak{}'static str} 类型：
+\begin{codebox}[rust]
+let s: String = String::from("Hello World!");
+\end{codebox}
+\texttt{Into} trait 实现了 \texttt{into()} 函数，调用它时不需要参数。\texttt{Into} 是借助 \texttt{From} 实现的，实现了 \texttt{From} 就会自动获得 \texttt{Into} 的实现。在如今的 Rust 版本中，几乎从不需要显式地实现 \texttt{Into}。
+从 C++ 转过来的人会觉得 \texttt{into()} 用起来有点神奇。在 C++ 中做类型转换时，我们通常要指定目标类型，而在 Rust 中用 \texttt{into()} 时，目标类型通常由上下文推断得出：
+\begin{codebox}[rust]
+let mut s: String = String::from("Hello");
+s = "Goodbye".into();
+\end{codebox}
+\label{idx:idx_9759ad22}
+从这个例子可以看出，我们无需告诉编译器想把 \texttt{\&str} 转换成 \texttt{String}。只要调用 \texttt{into()}，编译器就会从上下文推断出我们需要转换为 \texttt{String}。由于我们已经为 \texttt{\&str} 与 \texttt{String} 之间的转换实现了合适的 \texttt{From} trait（因而也就有了 \texttt{Into}），编译器便用它来执行转换。
+最后，我们来看看 \texttt{AsRef} trait，并开始理解为什么同一种转换有多种实现方式是有道理的。\texttt{AsRef} trait 通常由那些具有对应借用类型的拥有所有权的类型实现，用来返回借用类型。和前面 \texttt{String} 与 \texttt{str} 的情形一样，
+\texttt{as\_ref()} 会返回一个 \texttt{\&str}，与前面讨论过的 \texttt{as\_str()} 函数被
+调用时完全一样。
+\texttt{AsRef} 最常用作泛型函数中的 trait 约束。回忆\emph{第 2 章}，trait
+约束既能限制可以传入泛型函数的类型，又能让泛型函数在泛型参数上调用 trait 方法：
+\begin{codebox}[rust]
+use std::path::Path;
+fn use_a_path<T>(path: T)
+where
+    T: AsRef<Path>,
+{
+    let path:&Path=path.as_ref();
+    todo!()
+}
+\end{codebox}
+\label{idx:idx_e5e89b05}
+\texttt{AsRef<Path>} 由若干类型实现，其中包括 \texttt{\&str}，这意味着在使用这一 trait 约束时，我们可以把字符串字面量
+当作路径传入。
+\subsection{在 Rust 中定制解引用行为}
+\label{idx:idx_554c98b0}
+\label{idx:idx_2a19e197}
+C++ 里充斥着可能产生意外结果的隐式转换，从 C++ 转过来的人或许会欣赏 Rust 没有这些隐式花样。但 Rust 中的解引用却暴露了一种隐式行为，要想用好这门语言，理解它就变得非常重要。这种行为叫做 \textbf{Deref 强制转换}。
+\texttt{Deref} 强制转换围绕 \texttt{Deref} trait 展开，它让我们可以定制
+解引用发生时编译器的行为，通常使用 \texttt{*} 运算符。实践中，这常用于以很低的代价把引用从一种类型强制转换为另一种类型。希望提到类型转换已经让你联想到一对对拥有所有权的类型和借用的类型。的确，
+\texttt{String} 实现了以 \texttt{str} 类型为目标的 \texttt{Deref}，其 trait 实现
+在标准库中看起来是这样的：
+\begin{codebox}[rust]
+impl ops::Deref for String {
+    type Target = str;
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+\end{codebox}
+当在一个需要 \texttt{\&str} 的上下文中对名为 \texttt{x} 的 \texttt{\&String} 类型进行解引用时，编译器会在幕后调用 \texttt{x.deref()}，进而按照我们刚才看到的 trait 实现，导致对 \texttt{x.as\_str()} 的调用。虽然我们关心的是\emph{解引用}的行为，但请注意，
+\texttt{Deref} 的实现把一个引用转换为另一个引用。而这正是 \texttt{Deref} 强制转换发挥作用的地方：
+正如 Rust 会隐式地转换使用 \texttt{*} 的解引用操作一样，在适当的上下文中，它也会隐式地把一种引用类型转换为另一种引用类型。
+\label{idx:idx_098f87d0}
+换句话说，每当我们使用一个 \texttt{\&String} 引用时，Rust 编译器都会检查在当前程序上下文中是否期望一个 \texttt{\&String} 类型。如果确实如此，表达式的类型就是 \texttt{\&String}，一切照旧。但如果上下文期望的是 \texttt{\&str}，并且 \texttt{String} 实现了合适的 \texttt{Deref} trait，编译器就会用 \texttt{deref()} 函数把表达式的类型隐式强制转换为 \texttt{\&str}。
+\texttt{Deref} 强制转换对这门语言以及我们使用它的方式影响广泛，常常让新的 Rust 程序员感到意外。几乎每个使用字符串类型的 Rust 程序都会遇到两个主要影响。
+第一个影响是，\texttt{String} 类型的值几乎可以访问在 \texttt{str} 类型上实现的所有函数。换句话说，标准库无需为去除尾部空白提供例如 \texttt{String::\allowbreak{}trim\_\allowbreak{}end} 这样的实现，因为借助 \texttt{Deref} 强制转换，\texttt{String} 类型可以透明地访问 \texttt{str::\allowbreak{}trim\_\allowbreak{}end}。
+为什么会这样？回想一下，当我们为某个类型实现方法时，通常会为其提供一个 \texttt{\&self} 作为第一个参数。需要注意，\texttt{self} 是一个引用类型。当我们调用成员函数时，例如 \texttt{s.\allowbreak{}trim\_\allowbreak{}end(\allowbreak{})\allowbreak{}}，点运算符会隐式借用 \texttt{s}，把 \texttt{self} 作为引用参数传进去。这会触发 \texttt{Deref} 强制转换，也就是说，如果
+在 \texttt{String} 中找不到 \texttt{trim\_end()}，它就会转而在 \texttt{str} 中查找一个并透明地调用：
+\begin{codebox}[rust]
+let literal = "Hello ";
+let string = String::from(literal);
+assert_eq!("Hello", literal.trim_end());
+assert_eq!("Hello", string.trim_end());
+\end{codebox}
+在这个小例子中，我们只是把同一个字符串分别创建为 \texttt{\&\allowbreak{}'static str} 字面量和拥有所有权的 \texttt{String}，并演示可以对每个字符串调用 \texttt{str::\allowbreak{}trim\_\allowbreak{}end} 且结果相同。和前面一样，编译器会插入一个对 \texttt{deref()} 的隐式调用使这一切成立，例如 \texttt{string.\allowbreak{}deref(\allowbreak{})\allowbreak{}.\allowbreak{}trim\_\allowbreak{}end(\allowbreak{})\allowbreak{}}。实践中，我们从不需担心这个隐式调用，只需把 \texttt{String} 看成继承了 \texttt{str} 的方法即可。
+\label{idx:idx_8621db3c}
+\texttt{Deref} 强制转换的第二个主要影响在设计 API 时最为明显。有时我们想编写一个接收字符串类型的函数，但并不关心它是 \texttt{String} 还是
+\texttt{\&str}。在这些情况下，我们可以在设计函数时利用 \texttt{Deref} 强制转换。
+对此有许多可能的解决方案，包括让用户调用 \texttt{to\_\allowbreak{}string(\allowbreak{})\allowbreak{}} 或
+\texttt{as\_str()}，每当他们遇到一个接受的类型与自己手头的类型相反的函数时。
+Rust 程序员最常选择的方案是把每个不可变的字符串参数都设为 \texttt{\&str}。这样，本身就是 \texttt{\&str} 的字符串可以直接传入，而任何
+\texttt{String} 参数只需用 \texttt{\&} 借用，即可借助 \texttt{Deref} 强制转换从
+\texttt{\&String} 到 \texttt{\&str} 传入：
+\begin{codebox}[rust]
+fn print_string(s: &str) {
+    println!("{}", s);
+}
+fn main() {
+    print_string("Hello");
+    let owned: String = String::from("world");
+    print_string(&owned);
+}
+\end{codebox}
+在这个例子中，我们可以把 \texttt{"Hello"} 字面量字符串直接传给函数，因为二者都具有 \texttt{\&str} 类型。当我们借用拥有所有权的字符串 \texttt{"world"} 时，编译器会插入一个对 \texttt{deref()} 的隐式调用，把拥有所有权的引用转换为 \texttt{\&str}，而不是把它作为
+\texttt{\&String} 传入。在函数参数中使用借用类型的做法非常普遍，
+甚至连 Rust 的 lint 工具 Clippy 都会把它推荐为最佳实践。关于 Clippy 的更多信息，请参阅\emph{附录}。
+\label{idx:idx_c69d6f21}
+既然我们已经看过若干使用 Rust 各种字符串类型的示例，并探讨了 \texttt{From}、\texttt{Into}、\texttt{AsRef}、\texttt{Deref} 这些 trait 等基本概念，接下来我们将开始考察标准库对存储连续、可索引数据的容器的支持。
+\section{处理带索引的数据}
+\label{idx:idx_b3b04f0f}
+正如 C++ 有 \texttt{std::array}、\texttt{std::vector} 和 \texttt{std::span} 来存储可被轻易索引的连续元素一样，Rust 也相应地有数组、向量和切片。在本节中，我们将考察 Rust 的这些元素，并了解它们如何在遵守 Rust 借用规则的前提下协同工作。
+\subsection{使用数组类型}
+\label{idx:idx_06725fbb}
+我们已经在\emph{第 2 章}见过声明数组的语法，并在\emph{第 3 章}了解到越界访问会触发 panic，以此强制实施 Rust 的安全属性。现在，我们将重点放在实践中如何使用 Rust 数组。数组在初始化时选定一个固定大小，在程序运行期间永不改变。这个大小还必须在编译期已知，这意味着我们无法，比如说，读取一个大小未知的文件，然后把文件数据以数组的形式呈现给程序的其余部分。
+数组也是一种泛型类型，和我们在本节要考察的所有带索引类型一样。下面可以看到数组的类型和初始化：
+\begin{codebox}[rust]
+let my_array1: [u32; 5] = [0; 5];
+let my_array2: [u32; 5] = [0, 1, 2, 3, 4];
+\end{codebox}
+由于大小在编译期固定，它是类型的一部分。在这里，我们初始化了两个类型相同但值不同的数组。正如我们在\emph{第 2 章}所见，第一行用值 \texttt{0} 填充出五个元素，而第二行则逐个初始化每个元素。
+我们用 \texttt{[]} 运算符访问数组的某个元素。如果数组声明为 \texttt{mut}，就能用同样的语法给数组元素赋值：
+\begin{codebox}[rust]
+let mut my_array = [0u32, 1, 2, 3, 4];
+assert_eq!(my_array[0], 0);
+my_array[0] = 1;
+assert_eq!(my_array[0], 1);
+\end{codebox}
+\label{idx:idx_fd254cf5}
+数组的元素还可以用 \texttt{for} 循环来遍历：
+\begin{codebox}[rust]
+let my_array = [0u32, 1, 2, 3, 4];
+for x in &my_array {
+    println!("{}", x);
+}
+\end{codebox}
+在这个例子中，我们借用了这个数组。当数组被借用时，循环变量就变成一个引用。在这里，\texttt{x} 变量具有 \texttt{\&u32} 类型。由于这里数组是被借用的，所有权并未从中转移出去。如果我们直接传入 \texttt{my\_array}，那么循环操作就会转移所有权，\texttt{x} 循环变量将包含拥有所有权的值而非借用的值，并且按照 Rust 的所有权规则，该数组在作用域余下的部分都将无法使用。
+当然，我们也可以在循环中进行可变借用：
+\begin{codebox}[rust]
+let mut my_array = [0u32, 1, 2, 3, 4];
+for i in &mut my_array {
+    *i += 1;
+}
+println!("{:?}", my_array);
+\end{codebox}
+这个程序会打印以下内容：
+\begin{codeboxdark}
+[1, 2, 3, 4, 5]
+\end{codeboxdark}
+\label{idx:idx_e301216d}
+这个奇怪的 \texttt{\{:?\}} 符号是什么？它是 Rust 中格式化宏所接受的众多修饰符之一。在这里，它告诉格式化机制使用 \texttt{Debug} trait 来格式化字符串。许多类型都会 derive 或实现 \texttt{Debug} trait，从而提供一种对程序员（而非最终用户）有意义的类型可视化表示。
+数组会从它们的元素继承若干常见的 trait。也就是说，如果某个元素类型实现了某个 trait，数组也会实现它。\texttt{Debug} 就是其中之一，\texttt{Copy} 和
+\texttt{Clone} 也是。这意味着我们可以在格式字符串中使用 \emph{调试打印} 符号来打印任意数组，只要
+其元素也实现了 \texttt{Debug} 就行。完整的可继承 trait 列表可以在数组原生类型的文档中找到：\href{https://docs.rust-lang.org}{\texttt{https:/\allowbreak{}/\allowbreak{}docs.\allowbreak{}rust-\allowbreak{}lang.\allowbreak{}org}}。
+\subsection{使用向量实现灵活的运行时大小}
+\label{idx:idx_cdeddc9b}
+与 C++ 中的 \texttt{std::vector} 一样，在 Rust 里我们用 \texttt{Vec} 类型来提供一种运行时确定大小的数组类型。被标记为可变的向量可以在运行时按需增长和收缩。这使它成为许多其他数据结构的有用构件，包括我们前面用过的 \texttt{String} 类型。
+\label{idx:idx_eb78c8d0}
+\texttt{Vec} 类型如此重要，以至于它被包含在 Rust 的 \emph{预导入}（prelude）中，也就是一组自动导入的符号。这意味着 \texttt{Vec} 以及 \texttt{String}、\texttt{Option}、\texttt{Result} 和其他若干常见类型，都可以在程序中直接使用，而无需显式的 \texttt{use} 语句。
+可以使用 \texttt{vec!} 宏就地构造一个向量：
+\begin{codebox}[rust]
+let my_vec: Vec<u32> = vec![0, 1, 2, 3, 4];
+\end{codebox}
+这类似于初始化数组的语法，但当然，我们注意到向量的长度不再是类型的一部分，而数组则不然。不可变的向量无法调整大小，但「它的类型与一个元素相同、长度任意的向量相同」这一点仍然是一个重要性质。这让我们能够灵活地编写可处理任意长度的代码。
+初始化向量还有其他方式。例如，我们可以构造一个可变的 \texttt{Vec} 类型，然后向其中压入元素。这样做时，我们通常会让编译器推断向量的类型。虽然这最终是一种风格选择，但在 Rust 代码中，当类型不是显式需要时省略它非常常见：
+\begin{codebox}[rust]
+fn make_strings() -> Vec<String> {
+    let mut ret = Vec::new();
+    ret.push(String::from("Hello"));
+    ret.push(String::from("World"));
+    ret
+}
+\end{codebox}
+\label{idx:idx_f6da4a37}
+在这个函数中，编译器有足够的信息推断出我们正在构造一个
+\texttt{Vec<String>}，即当我们调用 \texttt{Vec::new()} 的时候。它不仅从 \texttt{ret} 被用作
+函数的返回类型这一点看出来，也能从我们正把 \texttt{String} 类型压入向量这一点看出来。如果在这里仍想显式指定向量的类型，最符合惯用法的方式是在初始化时为 \texttt{ret} 变量指定显式类型：
+\begin{codebox}[rust]
+let mut ret: Vec<String> = Vec::new();
+\end{codebox}
+虽然 \texttt{Vec::new} 使用得很频繁，但还有一个你应该了解的替代构造函数：
+\texttt{Vec::\allowbreak{}with\_\allowbreak{}capacity}。这个构造函数会为指定的向量长度预先分配内存。
+与 C++ 中一样，向量的大小调整是通过分配新内存、把每个元素拷贝到新的（通常更大的）内部缓冲区来实现的。这可能是一个开销很大的过程，所以当我们提前知道向量的确切大小或最可能的大小时，可以用 \texttt{with\_\allowbreak{}capacity(\allowbreak{})\allowbreak{}} 来避免它。这个构造函数的行为类似于 C++ 中的 \texttt{std::\allowbreak{}vector::\allowbreak{}reserve(\allowbreak{})\allowbreak{}}：
+\begin{codebox}[rust]
+fn copy_vector(source: Vec<u32>) -> Vec<u32> {
+    let mut ret = Vec::with_capacity(source.len());
+    for i in source {
+        ret.push(i);
+    }
+    ret
+}
+\end{codebox}
+虽然这里看到的 \texttt{copy\_\allowbreak{}vector} 函数在实际中毫无用处，但它演示了几个不同的概念。我们首先注意到，由于提前知道最终向量的大小，所以使用了 \texttt{with\_\allowbreak{}capacity(\allowbreak{})\allowbreak{}}。正因如此，我们知道 \texttt{push} 函数调用不会引起分配，而在其他情况下则可能会。
+向向量中压入元素可能引发内存分配，这一想法或许会让你联想到 C++ 中的 \emph{迭代器失效}。在 C++ 中，当向量的大小发生改变时，任何指向该向量的已存迭代器都会失效。这种情况大多不会被编译器检查出来，可能成为 bug 的来源，但在 Rust 中我们不会受到这类错误的伤害。回想一下，由于借用规则，在可变借用时我们不能存在任何其他未结束的引用。因此，不可能出现指向「曾经存放向量部分元素的内存」的悬垂引用。
+\label{idx:idx_dbcbb8e7}
+回到这个示例，我们还看到，用 \texttt{for}/\texttt{in} 遍历向量的元素与遍历数组的元素在语法上完全相同。不过，可调整大小的向量类型提供了比单纯迭代更有意思的操作选项。其中之一是一个非常有用的特定方法，名为 \texttt{Vec::\allowbreak{}retain(\allowbreak{})\allowbreak{}}。这个方法接受一个闭包（对 C++ 程序员来说就是「lambda」）作为参数，并用它来过滤向量的元素，只保留闭包返回 \texttt{true} 的那些元素。
+一个例子是过滤掉向量中偶数的调用：
+\begin{codebox}[rust]
+let mut v = vec![1, 2, 3, 4, 5];
+v.retain(|x| x % 2 == 1);
+println!("{:?}", v);
+\end{codebox}
+\label{idx:idx_a455faaa}
+\texttt{retain} 函数会反复调用这个闭包，把元素作为 \texttt{x} 参数传给它。可以看到，我们的闭包被设置为只对奇数返回 \texttt{true}，所以所有偶数都会从向量中删除。正如预期，打印输出如下：
+\begin{codeboxdark}
+[1, 3, 5]
+\end{codeboxdark}
+\subsection{使用切片处理借用的数据}
+\label{idx:idx_71c78df5}
+在前面 \emph{拥有所有权与借用的类型} 一节中考察过的类别里，Rust 的切片类型属于借用类型。切片最接近 C++20 中的 \texttt{std::span}，因为它们都表示一个「指针 + 长度」的组合，可以低成本地传递。这个指针始终是借用来的，因此切片在几乎所有上下文中都表现为引用类型，很像 \texttt{\&str}。不要把切片类型 \texttt{\&[T]} 与数组类型 \texttt{[T; N]} 混为一谈。我们不把它读作「数组引用」——尽管有人会这么猜——而应该读作「切片」。
+切片是通过从向量或数组借用而创建的，但类型也可以提供 \texttt{Deref} 实现，使其能够强制转换为切片。正如我们可能已经预料到的，\texttt{Vec<T>} 向量和 \texttt{[T; N]} 数组类型正是提供了这样的 \texttt{Deref} trait，从而使它们能够访问附着在切片类型上的所有方法。
+切片还可以通过用 \emph{区间} 索引，从数组、向量或切片创建。区间是 Rust 中的一等类型，表示由 \texttt{..} 运算符分隔的起始和结束索引。区间可以省略起始或结束索引，这意味着被索引容器的整个开头或结尾都会被包含进来。这种语法最好通过实际例子来看：
+\begin{codebox}[rust]
+let x = [0, 1, 2, 3, 4];
+assert_eq!(&x[1..3], [1, 2]);
+assert_eq!(&x[2..], [2, 3, 4]);
+assert_eq!(&x[..2], [0, 1]);
+\end{codebox}
+与 \texttt{\&str} 一样，切片上的许多操作都可以低成本完成，包括切分成一个或多个切片，以及从切片开头或结尾进行裁剪。
+切片上实现的一项特别值得关注的操作是排序。与 C++ STL 一样，Rust 标准库提供了两种排序方式。第一种是稳定排序，它保证比较结果相同的元素在最终排好序的容器中仍保持相同的相对顺序。相比之下，不稳定排序则不提供这种保证。在 Rust 中，\texttt{sort()} 方法实现的是稳定排序，而要使用不稳定排序必须显式选择
+\texttt{sort\_\allowbreak{}unstable(\allowbreak{})\allowbreak{}}。这与 C++ STL 所做的选择正好相反：在 C++ STL 中，\texttt{std::sort} 是
+不稳定排序，如果需要稳定排序，则要使用 \texttt{std::\allowbreak{}stable\_\allowbreak{}sort}：
+\begin{codebox}[rust]
+let mut x = [5, 4, 3, 2, 1];
+x.sort_unstable();
+assert_eq!(x, [1, 2, 3, 4, 5]);
+\end{codebox}
+回想一下，由于 \texttt{Deref} 强制转换，我们可以在数组和向量上调用切片的方法。正是这一点让我们能够在这个例子中对数组调用 \texttt{sort\_\allowbreak{}unstable(\allowbreak{})\allowbreak{}}。
+\label{idx:idx_97a8e17a}
+要在切片上调用排序函数，切片的 \texttt{T} 类型必须实现 \texttt{Ord} trait，表明它是可排序的。这个 trait 实现了一个 \texttt{cmp} 方法，用于比较 \texttt{\&self} 和一个
+\texttt{other} 同类型参数，并返回 \texttt{self} 比
+\texttt{other} 更小、相等还是更大。我们将在下一节中探讨为自定义类型实现 \texttt{Ord}。
+与字符串一样，在设计 API 时也应该把 \texttt{Deref} 强制转换考虑进去。当需要把数据传给函数时，只要有可能，我们就希望使用 \texttt{\&[T]} 或 \texttt{\&mut [T]} 切片类型作为参数。因为数组和向量都能强制转换为切片，这能确保我们的函数可以接受尽可能多种不同的类型。
+\section{使用字典类型}
+\label{idx:idx_ac7c6044}
+\label{idx:idx_af8da15e}
+\label{idx:idx_b33c3c56}
+\label{idx:idx_3f072074}
+字典类型，也被称为 \emph{关联数组} 或简称为 \emph{映射}，是许多类型程序中重要的数据结构。从概念上讲，它们把一系列 \emph{键} 各自映射到单个 \emph{值}，其中键和值的类型可以不同。本节将考察 Rust 如何实现映射，同时也会考察它的近亲——集合，即一种没有值的特殊映射。在本节中，映射和集合类型将统称为 \emph{字典类型}。
+\subsection{Rust 中映射与集合的风格}
+\label{idx:idx_9d892594}
+Rust 在其标准库中提供了两种风格的映射与集合结构。第一种是 \emph{哈希} 风格。\texttt{std::\allowbreak{}collections} 模块中的 \texttt{HashMap} 和 \texttt{HashSet} 类型通过为键生成哈希、再用该哈希在内存中挑选存放值的位置来存储数据。这意味着内部数据并非以任何对人类有意义、可解释的方式排序。哈希风格大致对应于 C++ 的 \texttt{std::\allowbreak{}unordered\_\allowbreak{}map} 和 \texttt{std::\allowbreak{}unordered\_\allowbreak{}set} 类型，额外的一点不同是：程序每次运行时哈希的种子都不同。
+为哈希设置种子可以理解为：在对每个键执行哈希之前，先给它加上一个随机的固定前缀。其效果是，哈希本身无法被程序员提前确定。这样做的目的是堵住一个潜在的安全漏洞：攻击者利用对哈希内部机制的知识，在键值对被加入映射或集合时预测其内存位置。由于 \texttt{map} 和 \texttt{set} 的哈希实现本身就规定内部顺序对人类没有用处，这种行为不应给程序员带来太多问题。不过，理解它仍然很重要，因为这是它相对于 C++ 标准库的一个重大行为差异。
+\texttt{map} 和 \texttt{set} 结构的另一种风格是 \texttt{btree} 风格。\texttt{BTreeMap} 和 \texttt{BTreeSet} 结构也存在于 \texttt{std::\allowbreak{}collections} 中。\texttt{btree} 前缀暗示了其内部实现，但理解这些结构的最佳方式是：它们的内部以确定性且对人类友好的方式排序。这些 Rust 类型几乎直接对应于
+C++ STL 中的 \texttt{std::map} 和 \texttt{std::set} 类型。通常，在 Rust 中最好使用 \texttt{btree} 类型
+当程序需要产生确定性的或已排序的数据时。
+\subsection{映射与集合的基本用法}
+\label{idx:idx_39e83dd7}
+在最基本的层面上，\texttt{map} 数据结构只需要一种向自身添加键值对的方式，以及一种仅凭键就能查询所存值的方式。通常，映射只允许一个键映射到一个特定的值，但它们在程序后续阶段是否允许把这个值更新为另一个值，属于实现上的选择，因库而异。要向字典类型添加新的键值对，我们可以使用 \texttt{insert()} 函数。对映射来说，它接受键和值作为两个独立的参数；而对集合来说，它只接受一个参数。\texttt{insert} 函数会把它参数的所有权转移给字典类型的内部，这意味着如果我们想在调用函数中稍后再次使用这些参数，可能就需要克隆它们。来看一个例子：
+\begin{codebox}[rust]
+use std::collections::HashMap;
+fn main() {
+    let mut map = HashMap::new();
+    let key = String::from("greeting");
+    let value = String::from("Hello World");
+    map.insert(key, value);
+    println!("{:?}", map);
+}
+\end{codebox}
+在这个例子中，\texttt{key} 和 \texttt{value} 的所有权被转移到映射中，在调用 \texttt{insert} 之后，它们就不能再在函数中使用了。该程序的输出表明插入如我们预期地发生了：
+\begin{codeboxdark}
+{"greeting": "Hello World"}
+\end{codeboxdark}
+\texttt{insert} 的返回值会告诉我们容器中是否已经存有相同的内容：对映射而言是相同的键，对集合而言是相同的值。对映射而言，它会返回一个
+\texttt{Option<V>}，也就是说，它要么返回映射中先前的值，要么返回 \texttt{None}，如果
+不存在先前的值。对集合而言，它只是返回一个 \texttt{bool}，告诉我们容器中先前是否存在值。
+\begin{myNotic}{注意}
+在 Rust 中，对映射使用 \texttt{insert} 函数会替换已经映射到该键的任何值。这与 C++ 的 \texttt{std::map} 和 \texttt{std::\allowbreak{}unordered\_\allowbreak{}map} 的 insert 函数的行为非常不同。在 C++ 中，插入不会替换已有的值，而是返回 \texttt{std::\allowbreak{}pair<\allowbreak{}iterator,\allowbreak{} bool>\allowbreak{}}，其中的布尔值告诉程序员是否执行了插入。
+\end{myNotic}
+\label{idx:idx_524cf21a}
+为了在稍后从映射或集合中取回数据，我们可以调用 \texttt{get()} 或
+\texttt{get\_mut()} 函数。这些函数接受一个指向我们要
+查找的项的引用，如果映射中存在该值，则返回一个持有该值引用的 \texttt{Option}，否则返回 \texttt{None}。返回的引用直接借用自字典结构的内部：
+\begin{codebox}[rust]
+if let Some(value) = map.get("greeting") {
+    println!("{}", value);
+}
+\end{codebox}
+回想一下，\texttt{if let} 是一种语法糖，其作用类似于只有一个分支的 \texttt{match} 语句。在这个例子中，只有当映射中恰好已经存在该值时，我们才会打印它。
+\subsection{使用 entry API}
+\label{idx:idx_e701fb6e}
+Rust 标准库中的 \texttt{HashMap} 和 \texttt{BTreeMap} 映射类型实现了所谓的 \emph{entry API}。entry API 的设计目的是让「根据键是否已在映射中」来执行条件操作变得更容易。视你的任务而定，与刚才看过的更传统的 \texttt{insert}/\texttt{get} API 相比，这套 API 可以提供一种更直观的方式来操作存储在映射内部的数据。
+entry API 通过 \texttt{entry()} 函数来访问，它和 \texttt{insert()} 函数完全一样地接受一个拥有所有权的键类型，但不接受任何值。\texttt{entry()} 函数返回一个特殊的
+\texttt{Entry} 类型，用于指示该条目在映射中是否已存在。\texttt{Entry} 类型上有几个
+辅助函数，用于执行各种任务。我们先来看一个例子：
+\begin{codebox}[rust]
+use std::collections::HashMap;
+fn main() {
+    let s = "Hello World";
+    let mut map = HashMap::new();
+    for c in s.chars() {
+        *map.entry(c).or_insert(0) += 1;
+    }
+    println!("{:?}", map);
+}
+\end{codebox}
+\label{idx:idx_110c01d1}
+这段代码使用 \texttt{HashMap} 类型实现了一个简单的计数器，用来统计每个字符在字符串中出现了多少次。我们首先必须使用来自 \texttt{std::\allowbreak{}collections} 的 \texttt{HashMap} 类型，使其在程序中可用。接着，我们声明变量，包括要计数的字符串和映射本身。在这个例子中，编译器完全推断出了映射的键和值类型，我们甚至不必把它们写出来，但完整类型是 \texttt{HashMap<\allowbreak{}char,\allowbreak{} i32>\allowbreak{}}。接下来，我们遍历字符串中的每个字符。回想一下，在 Rust 中 \texttt{char} 是一个 UTF-\allowbreak{}8 码点，而不是像我们在 C++ 中可能预期的那样是一个字节。虽然我们无法对多字节编码字符串中的特定字符进行索引，但可以高效地遍历它们的字符。
+当我们为每个字符调用 \texttt{entry()} 时，会得到一个 \texttt{Entry} 类型，它表示映射中一个已被占用或空闲的位置。如果是空闲的，我们唯一的选择就是插入，这通过 \texttt{or\_\allowbreak{}insert(\allowbreak{})\allowbreak{}} 函数完成。我们把每个缺失的值设为 0，这会把 \texttt{Entry} 转换为已占用的状态。最后，无论我们是刚刚插入该值还是它本来就在映射中，都给该值加 1。
+得到的输出大致如下：
+\begin{codeboxdark}
+{'e': 1, 'l': 3, 'r': 1, 'W': 1, 'd': 1, 'o': 2, ' ': 1, 'H': 1}
+\end{codeboxdark}
+由于我们使用的是 \texttt{HashMap}，输出顺序是随机的，并且每次运行都会变化，所以无论在本地还是在 Rust playground 中运行这段代码，得到的结果都相同，只是打印顺序不同。
+关于 entry API，最初令人意外的一点是：\texttt{or\_insert} 函数可能成为性能陷阱。由于只有当映射中该条目处还没有任何内容时 \texttt{or\_insert} 才会起作用，我们会期望它对每个字符最多只向映射中插入一次值，但我们的输入字符串中可能有成千上万个重复字符。对于其中大多数字符，我们期望这个函数什么都不做，但我们传给
+\texttt{or\_insert} 的参数却总会被求值。
+\label{idx:idx_e5dfa927}
+这意味着，如果参数不是像 \texttt{0} 这样的简单值，而是一个复杂的对象构造或其他开销很大的操作，我们就会掉进陷阱。我们会构造出这个对象，仅仅是为了把它传给 \texttt{or\_insert}，而大多数情况下它会立刻被丢弃，导致我们白白浪费大量工作。对于 \texttt{Entry}，我们有一个变通方法，就是 \texttt{or\_\allowbreak{}insert\_\allowbreak{}with} 函数。这个函数接受一个闭包作为参数，该闭包只在发生插入时才会被调用。
+我们可以像这样把前面的代码改为使用 \texttt{or\_\allowbreak{}insert\_\allowbreak{}with}：
+\begin{codebox}[text]
+*map.entry(c).or_insert_with(|| 0) += 1;
+\end{codebox}
+只有当希望插入的初始值很复杂或计算开销很大时，才需要做这种改动。当 \texttt{or\_insert} 被用于这样的参数时，Clippy 会给出警告，并建议改用 \texttt{or\_\allowbreak{}insert\_\allowbreak{}with}。
+这只是对 entry API 的简要介绍。要了解其能力的更多信息，请参阅 \texttt{std::\allowbreak{}collections} 文档：\href{https://doc.rust-lang.org/}{\texttt{https:/\allowbreak{}/\allowbreak{}doc.\allowbreak{}rust-\allowbreak{}lang.\allowbreak{}org/\allowbreak{}}}。
+\subsection{支持自定义键类型}
+\label{idx:idx_f85e9fe0}
+有时我们会有一个自定义类型，想把它用作本节一直在讨论的某个字典类型的键。和通常一样，Rust 依靠 trait 体系来表明某个类型可以用作键。\texttt{HashMap} 和 \texttt{HashSet} 容器要求其键类型必须实现 \texttt{Eq} 和
+\texttt{Hash} trait，而 \texttt{BTreeMap} 和 \texttt{BTreeSet}
+容器则要求该类型通过指定 \texttt{Ord} trait 来提供一种排序。
+我们从这三个 trait 中最简单的一个开始：\texttt{Hash} trait。大多数情况下，我们可以直接为结构体 derive 这个 trait，就像这样：
+\begin{codebox}[rust]
+#[derive(Hash)]
+struct MyString {
+    internal: String,
+}
+\end{codebox}
+\label{idx:idx_476f9ec8}
+如果结构体的所有成员的类型都已经实现了 \texttt{Hash}，这样做就行得通。
+如果需要对最终得到的哈希有更多控制，我们就必须手动实现 \texttt{Hash} trait。对于前面的结构体，它看起来会像这样：
+\begin{codebox}[rust]
+use std::hash::{Hash, Hasher};
+impl Hash for MyString {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.internal.hash(state);
+    }
+}
+\end{codebox}
+这个例子产生的结果与 derive 基本相同，但在需要时它可以被扩展或定制。如果需要更进一步的定制，应该查阅 \texttt{Hasher} trait 的文档。它实现了一套小型的 API，让我们可以直接写入要哈希的二进制数据。
+我们的自定义键还必须实现 \texttt{Eq} trait，它表示相等运算。这里，Rust 声明了一条罕见的不变式，编译器完全不检查它，而是完全由程序员来保证。标准库要求：当 \texttt{Eq} trait 的实现把两个对象声明为相等时，由 \texttt{Hash} trait 产生的它们的哈希值也必须相等。奇怪的是，理解 \texttt{Eq} 和 \texttt{Ord} trait 需要先理解浮点数。\texttt{Eq} 和 \texttt{Ord} trait 分别体现「全等」和「全序」，也就是说，每个值都能与任何其他值正确地进行相等比较和排序。
+由于特殊的 \texttt{NaN}（\emph{非数}）值的行为，浮点数不满足这一标准。NaN 表示一种特定的位模式，并且被定义为与任何其他浮点数（包括它自身）比较都不相等。许多语言只是忽略浮点数的这一特性，把它留给程序员处理，而 Rust 则通过创建单独的 trait 来表示「部分相等」和「部分排序」，把它编码进了类型系统。
+\label{idx:idx_d3deadd6}
+这两个「部分」trait——\texttt{PartialEq} 和 \texttt{PartialOrd}——必须分别先被实现，\texttt{Eq} 和 \texttt{Ord} 才能被实现。这些 trait 的所有实现彼此之间必须保持一致。也就是说，来自 \texttt{PartialOrd} 的 \texttt{partial\_\allowbreak{}cmp} 需要产生与
+来自 \texttt{Ord} 的 \texttt{cmp} 相同的结果，依此类推。这就是我们应当尽可能多使用 derive 的一个充分理由：
+\begin{codebox}[rust]
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct MyString {
+    internal: String,
+}
+\end{codebox}
+derive 总是会产生一致的结果，并且是所有做法中最容易实现的一种。手动实现这些特定的 trait 就留给你自己了，不过 \texttt{PartialOrd} 在 \href{https://doc.rust-lang.org/}{\texttt{https:/\allowbreak{}/\allowbreak{}doc.\allowbreak{}rust-\allowbreak{}lang.\allowbreak{}org/\allowbreak{}}} 上的文档是一个很好的起点。
+\section{小结}
+在本章中，我们深入探讨了标准库中最常见的容器，并考察了它们「拥有所有权」和「借用」两种版本。我们了解了每个容器的用途，并看到了它们的使用示例。在此过程中，我们学习了若干重要的 trait，包括
+\texttt{Debug}、\texttt{From}、\texttt{Into}、\texttt{AsRef}、\texttt{Deref}、\texttt{Eq}、\texttt{Hash} 和 \texttt{Ord}。
+下一章，我们将继续 Rust 标准库之旅，来看看 Rust 处理文件 I/\allowbreak{}O 的方式。
+\needspace{26\baselineskip}
+\begin{samepage}
+\subsection{获取本书的 PDF 版本及更多内容}
+扫描二维码（或访问 \texttt{packtpub.\allowbreak{}com/\allowbreak{}unlock}）。按书名搜索本书，确认版本，然后按照页面上的步骤操作。
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\emph{注意：请把发票放在手边。直接从 Packt 购买的订单无需发票。}
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\end{samepage}

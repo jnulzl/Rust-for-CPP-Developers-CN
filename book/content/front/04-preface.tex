@@ -1,0 +1,71 @@
+如果你经常在社交媒体上阅读编程相关内容，就很难绕开 Rust。尽管自 2015 年起就已有稳定版本发布，但在众多编程语言之中，它仍显得年轻，对许多人来说或许还很陌生。然而，像 Google 和微软这样的公司却公开表示欢迎这门语言及其独特的安全与可靠性优势。
+Rust 在许多与 C++ 相同的领域都表现出色。尤其是在低开销、高性能编程方面，很少有其他语言能像 Rust 那样与 C 和 C++ 一争高下。仅凭这一点，任何想要扩充自己技术工具箱的 C++ 程序员都值得学习它。
+本书讲的是 Rust，但它是专门为 C++ 程序员写的。在整本书中，我们将透过 C++ 的视角来观察 Rust。我们会突出两种语言的相似之处与差异，并基于这样一个认识：我们可以依托自己已有的 C++ 功底，快速理解 Rust 引入的概念。
+我们即将走过的这条路径，与我自己学习 Rust 的历程如出一辙。作为一名从业二十余年的 C++ 专业人士，我觉得接触 Rust 的经历在多个方面让我受益，包括我编写 C++ 代码时的思路。希望你在读完本书后也有同感。
+\section{本书的读者对象}
+本书面向希望了解 Rust 的 C++ 程序员：它是什么、它致力于解决什么问题，以及我们最初为什么要使用它。每一章都是专门为 C++ 程序员编写的，因此，具备中级到高级的 C++ 知识将有助于理解我们比较这两种语言时的讨论。
+\section{本书内容}
+\emph{第 1 章}，\emph{为什么选择 Rust？}，简要介绍 Rust 的历史，以及那些令众多人为之兴奋的技术取舍。
+\emph{第 2 章}，\emph{使用 Rust 语法}，逐一讲解 Rust 的语法，凡属可能之处，都把每个示例直接与 C++ 对比。
+\emph{第 3 章}，\emph{Rust 的安全模型}，详细展示 Rust 如何实现其安全与可靠性保证，这是理解如何在实践中使用这门语言的基础。\emph{第 4 章}，\emph{用 Cargo 管理 Rust 项目}，探讨 Rust 出色的构建、项目搭建与依赖管理工具。
+\emph{第 5 章}，\emph{数据结构}，解释 Rust 标准库如何表示向量、集合和映射等常见容器。
+\emph{第 6 章}，\emph{读写文件}，揭示 Rust 在处理文件和其他各类 I/\allowbreak{}O 流时如何管理 I/\allowbreak{}O 操作与错误处理。
+\emph{第 7 章}，\emph{理解迭代器}，揭开 Rust 函数式风格迭代器的神秘面纱，说明它们如何最终生成高效的代码。
+\emph{第 8 章}，\emph{面向对象编程}，展示 Rust 对面向对象编程的独特诠释，并探讨如何在同一程序里结合使用 Rust 的函数式与面向对象特性。
+\emph{第 9 章}，\emph{在 Rust 中使用 C++}，探讨 C++ 与 Rust 之间的互操作性，展示这两种语言如何通过 Rust 的外部函数接口协同工作。
+\emph{第 10 章}，\emph{Rust 中的优化}，详述如何找出 Rust 程序中的瓶颈并衡量改进效果，并解释如何把我们从 C++ 中得来的性能直觉迁移到 Rust。
+\emph{第 11 章}，\emph{Rust 中的多线程}，展示 Rust 的安全保证如何延伸到多线程程序，并给出若干在 Rust 中使用线程的技巧。
+\emph{第 12 章}，\emph{用宏进行元编程}，讨论 Rust 强大的宏系统，并逐一演练 Rust 众多类型宏的示例。
+\emph{第 13 章}，\emph{继续深入 Rust}，就如何以爱好者、专业人士和社区成员的身份继续学习 Rust，提供信息与建议。
+\emph{附录}，\emph{搭建开发环境}，包含一份搭建 Visual Studio Code 与 Rust 开发环境的分步指南。
+\section{如何充分利用本书}
+本书使用的 Rust 版本为 1.\allowbreak{}82.\allowbreak{}0。代码示例可在 Linux、macOS 或 Windows 上运行，也可以在 Rust Playground 中试用，地址是 \href{https://play.rust-lang.org/}{\texttt{https:/\allowbreak{}/\allowbreak{}play.\allowbreak{}rust-\allowbreak{}lang.\allowbreak{}org/\allowbreak{}}}。安装 Rust 及兼容文本编辑器的帮助可参见\emph{附录}。
+\subsection{下载示例代码文件}
+本书的代码包托管在 GitHub 上：\href{https://github.com/PacktPublishing/}{\texttt{https:/\allowbreak{}/\allowbreak{}github.\allowbreak{}com/\allowbreak{}PacktPublishing/\allowbreak{}}}
+\texttt{Rust-\allowbreak{}for-\allowbreak{}CPP-\allowbreak{}Developers}。我们还从丰富的图书目录中提供其他代码包
+和视频，地址为 \href{https://github.com/PacktPublishing}{\texttt{https:/\allowbreak{}/\allowbreak{}github.\allowbreak{}com/\allowbreak{}PacktPublishing}}。快去看看吧！
+\subsection{下载彩色图片}
+我们还提供一个 PDF 文件，其中包含本书所用截图/\allowbreak{}图表的彩色图片。你可以在此处下载：\href{https://packt.link/gbp/9781836206514}{\texttt{https:/\allowbreak{}/\allowbreak{}packt.\allowbreak{}link/\allowbreak{}gbp/\allowbreak{}9781836206514}}。
+\subsection{本书使用的约定}
+本书通篇使用了若干种文本约定。
+\texttt{CodeInText}：表示正文中的代码词汇、数据库表名、文件夹名、文件名、文件
+扩展名、路径名、示例 URL、用户输入以及 Twitter 账号。例如：“在近期的标准中，这些语言引入了 \texttt{stdint.h} 和 \texttt{cstdint} 头文件，提供诸如 \texttt{int32\_t} 或 \texttt{uint64\_t} 这样的定宽类型。”
+代码块设置如下：
+\begin{codebox}[rust]
+struct Vector3 {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+\end{codebox}
+任何命令行输入或输出都写作如下形式：
+\begin{codeboxdark}
+checkpoint 1
+checkpoint 2
+checkpoint 3
+drop
+checkpoint 4
+\end{codeboxdark}
+\textbf{粗体}：表示新术语、重要词汇，或你在屏幕上看到的词。例如，菜单或对话框中的词在正文里就像这样出现。举例来说：“为避免这种情况，对于概念上属于‘\textbf{普通旧数据}’，即 \textbf{POD} 的结构体，最好使用 \texttt{Copy}。”
+\begin{myNotic}{注意}
+警告或重要提示会像这样出现。
+\end{myNotic}
+\begin{myTip}{提示}
+技巧和提示会像这样出现。
+\end{myTip}
+\section{联系我们}
+我们始终欢迎读者的反馈。
+\textbf{一般反馈}：如果你对本书的任何方面有疑问，或有任何一般性反馈，请发送邮件至 \texttt{customercare@packt.\allowbreak{}com}，并在邮件主题中注明本书书名。
+\textbf{勘误}：尽管我们已尽力确保内容的准确性，但错误仍在所难免。如果你在本书中发现了错误，若能将此告知我们，我们将不胜感激。请访问 \href{http://www.packt.com/submit-errata}{\texttt{http:/\allowbreak{}/\allowbreak{}www.\allowbreak{}packt.\allowbreak{}com/\allowbreak{}submit-\allowbreak{}errata}}，点击 \textbf{Submit Errata}，并填写表单。
+\textbf{盗版}：如果你在互联网上发现我们作品的任何形式的非法副本，若你能向我们提供其位置地址或网站名称，我们将不胜感激。请通过 \texttt{copyright@packt.\allowbreak{}com} 联系我们，并附上该资料的链接。
+\textbf{如果你有兴趣成为作者}：如果你在某个领域有所专长，并且有兴趣撰写或参与编写一本书，请访问 \href{https://www.packtpub.com/write-for-us}{\texttt{https:/\allowbreak{}/\allowbreak{}www.\allowbreak{}packtpub.\allowbreak{}com/\allowbreak{}write-\allowbreak{}for-\allowbreak{}us}}。
+\section{分享你的想法}
+读罢\emph{《Rust for C++ 开发者》}，我们很想听听你的想法！扫描下方二维码，直接前往本书的 Amazon 评论页面，分享你的反馈。
+\href{https://packt.link/r/1836206518}{\texttt{https:/\allowbreak{}/\allowbreak{}packt.\allowbreak{}link/\allowbreak{}r/\allowbreak{}1836206518}}
+你的评论对我们和技术社区都很重要，它将帮助我们确保始终提供优质的内容。
+\section{随书附赠的免费权益}
+本书附带免费权益，助你学习。立即激活即可马上使用（操作说明见“\emph{如何解锁}”一节）。
+下面简要概述了购买本书后可以立即解锁的内容：
+\subsection{如何解锁}
+扫描二维码（或访问 \texttt{packtpub.\allowbreak{}com/\allowbreak{}unlock}）。按书名搜索本书，确认版本，然后按页面上的步骤操作。
+\emph{注：请把发票备在手边。直接从 Packt 购买则无需发票}

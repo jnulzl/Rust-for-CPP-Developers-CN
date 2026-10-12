@@ -1,0 +1,522 @@
+与 I/\allowbreak{}O 以及同文件系统交互相关的一系列话题，在较新的编程语言中往往被忽视。不止一次，我坐下来想试一门实验性的编程语言，结果却发现开发者根本没有实现任何打开文件的手段。
+幸好，Rust 并非如此——它的标准库中充满了设计良好的功能，用于处理文件和文件夹。在本章中，我们将继续对标准库的探索，目标是理解 Rust 如何暴露文件系统和 I/\allowbreak{}O 操作。
+本章将涵盖以下主要主题：
+\begin{itemize}
+  \item 使用文件
+  \item 探索 Rust I/\allowbreak{}O API
+  \item 简单的序列化与反序列化
+\end{itemize}
+\section{技术要求}
+本章示例使用 Rust 1.\allowbreak{}82.\allowbreak{}0，但它们同样适用于任何更新的版本。
+如果你在安装 Rust 时需要帮助，请参见\emph{附录}。
+你可以在本书的 GitHub 仓库中找到本章的代码文件：\href{https://}{\texttt{https://}}
+\texttt{github.\allowbreak{}com/\allowbreak{}PacktPublishing/\allowbreak{}Rust-\allowbreak{}for-\allowbreak{}CPP-\allowbreak{}Developers}.
+\section{使用文件}
+\label{idx:idx_5c13fba5}
+在深入 Rust I/\allowbreak{}O 处理的核心之前，我们先来探讨几个话题，它们将为使用文件打下必要的基础。在本节中，我们将研究 Rust 的文件系统路径抽象，学习如何以符合习惯的方式处理错误，并认识几个能极大简化读取文件这一任务的有用函数。
+\subsection{使用文件系统路径}
+\label{idx:idx_3be63d99}
+遗憾的是，最流行的操作系统在处理文件系统路径的方式上都存在细微差异，这意味着我们需要一层抽象来处理这些差异。在这里，Rust 通过 \texttt{std::path} 模块为我们解了围。该模块实现了一组类型和一个 API，以尽可能跨平台、同时又对程序员无干扰的方式来处理文件系统路径。
+我们试图抽象掉的究竟是哪些差异呢？首先，不同平台使用不同的目录分隔符。有些平台使用正斜杠字符 \texttt{/} 来分隔，而另一些平台则使用反斜杠字符 \texttt{\textbackslash{}}。第二个差异是字符编码。Windows 规定文件系统路径以 UTF-\allowbreak{}16 编码，而类 Unix 平台则往往不强制任何特定的编码。
+正如\emph{第 5 章}中提到的，Rust 标准库包含两种类似字符串的类型：\texttt{PathBuf} 和 \texttt{Path}。\texttt{Path} 是一种借用类型，这意味着我们通常会看到它以引用的形式使用。在底层，这些类型是对 \texttt{OsString} 和 \texttt{OsStr} 类型的薄 API 封装，二者分别是所有权类型和借用类型。这两种类型负责抽象掉字符编码问题，而 \texttt{Path} 和 \texttt{PathBuf} 的方法则负责抽象掉文件系统的差异。
+我们通常通过两种方式构造 \texttt{PathBuf} 类型：要么用 \texttt{String} 或 \texttt{\&str} 调用 \texttt{PathBuf::\allowbreak{}from} 函数，要么把路径元素逐个推入一个用
+\texttt{PathBuf::\allowbreak{}new} 构造的可变缓冲区中。下面来看看用这两种方法构造 \texttt{src/main.rs} 路径的示例：
+\begin{codebox}[rust]
+let path1 = PathBuf::from("src/main.rs");
+let mut path2 = PathBuf::new();
+path2.push("src");
+path2.push("main.rs");
+assert_eq!(path1, path2);
+\end{codebox}
+如果我们把这段代码输入 Rust Playground，就会看到断言通过。尽管我们使用正斜杠作为路径分隔符，这段代码在 Windows 平台上依然能通过，因为正斜杠在那里也是合法的路径分隔符。如果我们把示例中的第一个路径改为
+\texttt{PathBuf::\allowbreak{}from(\allowbreak{}"src\textbackslash{}\textbackslash{}main.\allowbreak{}rs")\allowbreak{}}，那么断言会在 Windows 上通过，但在 Linux 上不会，因为在那里
+反斜杠不会被当作路径分隔符。由此可见，如果我们使用字面量路径，最好使用正斜杠，以获得最一致的跨平台行为。
+\label{idx:idx_e5f4ccbf}
+许多 Rust 函数，包括若干用于读写文件的函数，都选择使用
+\texttt{AsRef<Path>} 作为描述文件在磁盘上位置的泛型类型参数。在这种情况下，我们
+可能根本不需要构造 \texttt{PathBuf} 类型。\texttt{AsRef<Path>} 由 \texttt{String} 和 \texttt{\&str} 两者共同实现，这意味着我们可以把普通的、格式良好的 Rust 字符串作为路径传给这些函数。
+\label{idx:idx_391f1682}
+既然大多数以路径为参数的函数都能接受普通字符串，我们很容易就想干脆完全忽略 Rust 的路径类型。然而，标准库中的路径操作函数由于提供了额外的操作，仍然非常有用。例如，我们可以轻松地去掉文件扩展名、引用同一目录下的其他文件、从现有路径创建新的绝对或相对路径，以及规范化路径。
+\texttt{Path} 的一个极其有用的功能是它能够直接查询操作系统元数据。这一功能在 C 生态中是以 \texttt{stat} 函数的形式暴露的。调用 \texttt{metadata()} 函数会通过 \texttt{Metadata} 结构体向我们提供大量有用信息，包括修改时间和文件大小。
+\texttt{metadata()} 函数之所以有趣，是因为它可能返回错误。但我们应当如何处理这个错误呢？在下一节中，我们将完整地学习如何处理这类函数。
+\subsection{在 Rust 中处理错误}
+\label{idx:idx_e65632f6}
+谈到文件系统操作，就不可避免地要谈到错误。Rust 不像 C++ 那样使用异常来进行错误处理，而是结合使用泛型
+\texttt{Result<\allowbreak{}T,\allowbreak{} E>\allowbreak{}} 类型与 \texttt{panic} 机制。\texttt{Result} 是一个泛型枚举，表示要么是
+\texttt{Ok} 变体，持有一个 \texttt{T} 类型的值；要么是 \texttt{Err} 变体，持有一个 \texttt{E} 类型的值。
+\label{idx:idx_1fdaa1f3}
+每当有一个可能产生错误的函数时，我们都声明它返回 \texttt{Result}。这样就把「可能返回错误」这一事实直接编码进了函数的类型签名中。
+\label{idx:idx_900e0288}
+在 Rust 中，函数通常会把任何错误立即传给调用它的函数。这让调用方可以选择以某种方式处理该错误，无论是从错误中恢复、记录它，还是忽略它。许多函数也会依次把错误传给自己的调用方，这样一直向上传递，直到程序的 \texttt{main} 函数。如果 \texttt{main} 返回 \texttt{Result} 的 \texttt{Err} 变体，程序将退出并打印所产生的错误。
+\label{idx:idx_e3314e29}
+在有些人看来，把错误逐级向上传递、直到程序退出，这种做法似乎根本算不上在处理错误。但最终的效果与 C++ 中的异常处理有些接近，因为程序可以选择在这条路径上的任意一点处理该错误。如果没有代码专门处理该错误，结果便是程序退出。Rust 这一策略所提供的优势在于：关于什么可能「抛出」错误的信息被清晰地编码在每个函数的类型签名中，并且返回的 \texttt{Result} 无法被忽略。为了实现后一种行为，Rust 使用了功能上类似于 C++17 的
+\texttt{[\allowbreak{}[\allowbreak{}nodiscard]\allowbreak{}]\allowbreak{}} 属性。
+其他语言也使用过与 Rust 类似的错误处理机制，但它们饱受批评，因为处理错误或把错误沿调用栈向上传递需要耗费大量工作。有没有兼顾两全其美的办法呢？Rust 设计者在首次稳定版发布之后，经历了一系列修订，其追求就是尽量减少程序员不得不应付的样板代码。我们将考察他们相继提出的一系列方案，从最复杂的开始，一路讲到最新的错误处理惯用法。
+在最基本的层面上，在 Rust 中处理错误是什么样子呢？如我们所见，\texttt{Result<T,}
+\texttt{E>} 是一个泛型枚举，它会持有两个不同变体中的一个。回想一下，要判断
+枚举持有的是哪个值，我们应当使用模式匹配。这里，我们来看看用 \texttt{match} 语句处理错误是什么样子：
+\begin{codebox}[rust]
+let value = match result {
+    Ok(value) => value,
+    Err(err) => return Err(err),
+};
+\end{codebox}
+\label{idx:idx_5146fee9}
+在本例中，我们可以假设 \texttt{result} 变量包含着某个函数返回的 \texttt{Result<T,E>} 值。我们希望在没有错误时把值从 result 中取出（也就是\emph{解包（unwrap）}它）。我们这样做是为了让函数余下的部分——它想必会用到该结果——不必再处理被包裹在 \texttt{Result} 里的值。如果这个 \texttt{Result} 表示的是一个错误，我们就直接返回该错误，把它进一步沿调用栈向上传递。
+\label{idx:idx_d2b4136c}
+\label{idx:idx_03b3cdce}
+每当我们处理或传递错误时都要手写这段冗长的 \texttt{match} 语句，会非常不方便。关于上面这段代码，有一点值得注意：它对任何 \texttt{Result<T,E>} 类型都适用，无论 \texttt{T} 和 \texttt{E} 是什么类型。有鉴于此，Rust 的设计者借机改进了处理错误所需代码的简洁性。这体现为一个名为 \texttt{try!} 的宏，用来封装我们刚刚看到的行为：
+\begin{codebox}[rust]
+let value = try!(result);
+\end{codebox}
+这大大减少了处理错误的工作量，但如果我们把这个示例输入 Rust Playground，就会发现它根本已经无法运行了。这个方案已被废弃，自 Rust 的 2018 edition 起，\texttt{try} 标识符被改作他用。尽管如此，\texttt{try!} 宏仍是 Rust 走向简洁错误处理之路上一个有用的历史站点。
+如果 \texttt{try!} 已被废弃，那想必意味着有更好的东西取代了它。而这个更好的东西，就是我们所说的问号运算符 \texttt{?}。实际用起来是这样的：
+\begin{codebox}[rust]
+let value = result?;
+\end{codebox}
+问号运算符提供的功能与我们刚看到的 \texttt{match} 语句相同。如果 \texttt{Result} 包含 \texttt{Ok} 变体，它会解包该值并赋值给 \texttt{value} 变量。如果 \texttt{Result} 包含 \texttt{Err} 变体，它会立即从函数返回。至此，我们终于得到了一种简洁且在语法上独具特色的错误处理方式。
+当然，由于前面的示例都可能返回 \texttt{Err} 值，它们只能用在本身返回 \texttt{Result<T,E>} 的函数中。这可能意味着，在调用栈的每一处，我们都必须为 \texttt{E} 使用完全相同的类型。不过 Rust 在这里提供了一点帮助，它借助了
+\texttt{From} trait。回想一下，\texttt{From} 和 \texttt{Into} trait 可用于在相关类型之间进行转换。
+\label{idx:idx_468c5109}
+这样一来，crate 就可以提供自己的错误类型，并与标准库的错误类型无缝协作。
+\label{idx:idx_c0b6c2ff}
+\label{idx:idx_15c53426}
+值得注意的是，错误类型就是任何实现了 \texttt{std::\allowbreak{}error::\allowbreak{}Error} trait 的类型。只有实现了该 trait，一个类型才能被用作 \texttt{Result<T,E>} 值中的 \texttt{E} 类型。标准库定义了若干不同的错误类型，但本章我们将重点关注的类型是 \texttt{std::\allowbreak{}io::\allowbreak{}Error}，它被大多数处理任何形式 I/\allowbreak{}O 的函数使用。在文档和代码中，你最常见到的是把这个类型简写为 \texttt{std::\allowbreak{}io::\allowbreak{}Result<\allowbreak{}T>\allowbreak{}}，它被定义为 \texttt{Result<\allowbreak{}T,\allowbreak{}std::\allowbreak{}io::\allowbreak{}Error>\allowbreak{}}。
+\texttt{std::\allowbreak{}io::\allowbreak{}Error} 向我们提供了一个 \texttt{kind()} 函数，它返回一个 \texttt{std::\allowbreak{}io::\allowbreak{}ErrorKind} 枚举。如果你想在不把错误沿调用栈向上传递的情况下处理特定错误——比如文件不存在——这会很有帮助。以这种方式使用 \texttt{ErrorKind} 的示例可能是这样的：
+\begin{codebox}[rust]
+if let Err(e) = std::fs::read_to_string("file.txt") {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        eprintln!("File not found: {:?}", e);
+    } else {
+        return Err(e);
+    }
+}
+\end{codebox}
+\label{idx:idx_ebbafd32}
+在探索了 Rust 的错误处理之后，我们现在已经有足够的背景知识来继续探索 I/\allowbreak{}O，但错误处理这个主题远比这里能讲的要大得多。人们创建了许多流行的 crate，让错误处理更简单、更方便。寻找更多信息的一个好的起点，是 \texttt{crates.io} 上 \texttt{anyhow} 和 \texttt{thiserror} crate 的文档。眼下，我们将继续看一看 Rust 用于读写文件的几个高层次抽象。
+\subsection{理解高层次的 I/\allowbreak{}O 抽象}
+\label{idx:idx_69b1fc8d}
+由于读写文件是如此常见的操作，Rust 设计者在 \texttt{std::fs} 模块中放入了一系列高层次抽象，让这一过程在许多常见用例中变得简单。这些封装可以把文件的全部内容读入一个 \texttt{String} 或一个
+\texttt{Vec<u8>}，只需一次调用。类似地，它们可以把 \texttt{\&str} 或 \texttt{\&[u8]} 的全部内容直接写入
+磁盘，只需一次调用。我们将依次讲解每个函数的示例。
+\label{idx:idx_b02c6582}
+首先，我们来看 \texttt{read\_\allowbreak{}to\_\allowbreak{}string} 函数。它接受一个泛型 \texttt{AsRef<Path>} 参数，返回一个 \texttt{std::\allowbreak{}io::\allowbreak{}Result<\allowbreak{}String>\allowbreak{}}：
+\begin{codebox}[rust]
+let contents: String = std::fs::read_to_string("file.txt")?;
+\end{codebox}
+依照问号运算符的行为，要么 \texttt{contents} 变量会包含一个 \texttt{String}，要么我们会立即返回，把一个 \texttt{std::\allowbreak{}io::\allowbreak{}Error} 传给调用方。回想一下，由于我们使用了问号运算符，这段代码必须存在于一个返回 \texttt{Result} 的函数中。
+下一个有用的封装函数就叫 \texttt{read}。这个函数返回一个
+\texttt{std::\allowbreak{}io::\allowbreak{}Result<\allowbreak{}Vec<\allowbreak{}u8>\allowbreak{}>\allowbreak{}}，其中 \texttt{Vec<u8>} 是 Rust 中表示具有所有权的
+字节容器的最佳方式：
+\begin{codebox}[rust]
+let contents: Vec<u8> = std::fs::read("file.bin")?;
+\end{codebox}
+写文件时，我们只有一个可用的封装函数，名为 \texttt{write}。这个函数接受两个参数，第一个参数是表示文件名的泛型 \texttt{AsRef<Path>}，第二个是表示内容的泛型 \texttt{AsRef<[u8]>}。由于 \texttt{str} 实现了 \texttt{AsRef<[u8]>}，我们可以把字符串或任何能强制转换为字节切片的类型传给
+\texttt{write} 函数，它就会如我们所期望的那样出现在磁盘上的文件中：
+\begin{codebox}[rust]
+std::fs::write("out.txt", "Hello World\n")?;
+\end{codebox}
+\texttt{write} 函数返回 \texttt{std::\allowbreak{}io::\allowbreak{}Result<\allowbreak{}(\allowbreak{})\allowbreak{}>\allowbreak{}}，我们可能还记得，\texttt{()} 在 Rust 中充当「无类型」的占位符，类似于 C++ 中的 \texttt{void} 类型。在用问号运算符处理了潜在的错误之后，我们对函数的返回值就没什么可做的了，因此无需把它赋给任何东西。
+\label{idx:idx_bba0f367}
+\texttt{write} 函数会在文件不存在时创建它，并会覆盖磁盘上同一路径下已存在的任何文件。在许多平台上，如果该文件已被另一个进程打开用于写入，或被文件系统标记为只读，这个函数会返回错误。
+\label{idx:idx_b702221b}
+虽然这些高层次封装函数让我们能快速编写读写文件的代码，但它们还不够强大，无法满足每个程序的需求。接下来，我们将探索 Rust 为 I/\allowbreak{}O 操作暴露的完整 API，并了解这些操作如何应用于各种类型的输入和输出源。
+\section{探索 Rust I/\allowbreak{}O API}
+\label{idx:idx_93200f4a}
+既然我们已经理解了如何处理路径、处理错误，以及执行简单的读写操作，但我们还没有接触到真正的 Rust I/\allowbreak{}O API。首先，我们将考察如何打开文件。然后，我们将深入探讨位于 \texttt{std::io} 模块中、构成该 API 本身的那些基础 I/\allowbreak{}O trait。我们将逐一考察这些 trait，最后，我们将研究如何利用 crate 生态来扩展 Rust I/\allowbreak{}O API。
+\subsection{打开文件以供读取或写入}
+\label{idx:idx_743b735a}
+在读取或写入任何数据之前，我们需要一个输入源或输出目标。虽然内存缓冲区或网络套接字都能担当此用，但文件最为常见，因此从处理文件入手是很自然的起点。
+文件在被读取或写入之前，必须先被打开。大多数操作系统都提供了不同的打开文件方式。通常，以读取方式打开和以写入方式打开是最常见的方法，但视文件系统而定，可能还有许多其他选项可用。在 Rust 中，我们可以先从少数几个针对更常见文件打开配置的「简单」函数入手，然后再转向更「高级」的 API，以便在需要时获得更高程度的控制。也许最简单的情况，是以只读方式打开一个已存在的文件。在 \texttt{std::fs} 模块中，我们找到了 \texttt{File} 结构体，它有一个用于此目的的 \texttt{open} 方法。与我们用过的其他函数一样，\texttt{File::open} 接受一个泛型 \texttt{AsRef<Path>} 参数，这意味着我们可以把要打开文件的位置指定为 \texttt{Path} 引用或字符串类型：
+\begin{codebox}[rust]
+let file = File::open("test.txt")?;
+\end{codebox}
+由于打开文件可能因多种原因而失败，\texttt{File::open} 会返回一个
+\texttt{std::\allowbreak{}io::\allowbreak{}Result<\allowbreak{}File>\allowbreak{}}，因此我们必须处理它。正如我们见过的其他情况，这通常
+\label{idx:idx_82c3a411}
+是通过把错误传给调用方来完成的，但有时专门处理那些表示文件在磁盘上未找到的错误也可能很有用。
+回想一下，我们可以使用 \texttt{kind()} 函数来处理像这样的情形：
+\begin{codebox}[rust]
+let file = match std::fs::File::open("test.txt") {
+    Err(err) if err.kind() == ErrorKind::NotFound => {
+        eprintln!("File not found!");
+        return Err(err);
+    }
+    x => x?,
+};
+\end{codebox}
+在这个示例中，我们仍然只是把任何 \texttt{NotFound} 错误传给调用方，但在此发生之前我们还加了自己的打印。这里，\texttt{x} 是一个模式，匹配任何未被该分支处理的值。它是 \texttt{default \_\allowbreak{} catch-\allowbreak{}all} 模式的具名版本，而 \texttt{x} 这个名字是随意取的。
+向文件写入时，我们可以使用 \texttt{File::\allowbreak{}create(\allowbreak{})\allowbreak{}} 或 \texttt{File::\allowbreak{}create\_\allowbreak{}new(\allowbreak{})\allowbreak{}} 函数。
+\texttt{create()} 函数会打开文件以供写入，如果文件已在
+系统中存在，它会覆盖该文件，而 \texttt{create\_\allowbreak{}new(\allowbreak{})\allowbreak{}} 在文件已存在时会返回错误。
+这些函数很有用，但它们没有提供所需的控制程度，比如向磁盘上已有文件追加内容。为此，我们需要求助于
+\texttt{std::\allowbreak{}fs::\allowbreak{}OpenOptions}。这个结构体使用了\emph{建造者模式（builder pattern）}。一个作为建造者的结构体
+\label{idx:idx_c1fbadb0}
+会暴露若干返回 \texttt{\&mut Self} 类型的函数。其用意是，我们可以按需把任意多个方法串联起来，每个方法修改一点状态，然后返回 \texttt{self}。最后一次调用则执行重要的收尾工作，利用结构体中累积的状态来决定其行为。建造者模式在 Rust 中很常用，因为这门语言不支持默认函数参数或重载函数。在 C++ 中，我们可能会用一系列重载构造函数或默认参数来提供一个复杂的初始化过程，而建造者模式则是在 Rust 中实现这一点的符合人体工程学的方式。下面来看一个使用 \texttt{OpenOptions} 的示例：
+\begin{codebox}[rust]
+let file = std::fs::OpenOptions::new()
+    .append(true)
+    .write(true)
+    .create(true)
+    .open("file.txt")?;
+\end{codebox}
+\texttt{OpenOptions::\allowbreak{}new(\allowbreak{})\allowbreak{}} 函数创建一组默认选项。随后 \texttt{append} 和 \texttt{write} 方法修改默认状态，指定我们想要以追加方式打开文件。最后，我们调用 \texttt{open} 方法，用我们指定的选项执行实际的文件打开操作。\texttt{open} 方法的返回类型是 \texttt{std::\allowbreak{}io::\allowbreak{}Result<\allowbreak{}File>\allowbreak{}}，正如
+我们之前看到的 \texttt{File::\allowbreak{}create} 和 \texttt{File::open} 函数那样，它们只是对 \texttt{OpenOptions} 的封装
+本身。
+既然我们理解了如何打开文件，就可以开始探索 I/\allowbreak{}O API 本身了。
+\subsection{理解基础的 I/\allowbreak{}O trait}
+\label{idx:idx_338a187a}
+在大多数语言生态中，I/\allowbreak{}O 的基础操作是读取、写入和定位。相应地，Rust 通过 \texttt{std::\allowbreak{}io::\allowbreak{}Read}、
+\texttt{std::\allowbreak{}io::\allowbreak{}Write} 和 \texttt{std::\allowbreak{}io::\allowbreak{}Seek} trait 分别暴露这些操作。为方便起见，标准
+库提供了通过一条 \texttt{use}
+\texttt{std::\allowbreak{}io::\allowbreak{}prelude::\allowbreak{}*} 语句一次把这些 trait 全部引入程序中的选项。
+为什么这些操作被实现为 trait 而不是函数呢？最重要的原因是，它们能在任意数量、各不相同的潜在输入源或输出目标之上暴露一致的接口。Rust 标准库为这些 trait 各自提供了许多实现者，包括文件、内存缓冲区，甚至网络套接字。
+然而，为这些 API 使用 trait 的一个小缺点在于，trait 设计者必须依赖各个实现遵循与标准库类型相同的行为。每个 trait 的文档都规定了所期望的确切行为，但标准库之外的实现可能遵循、也可能不遵循这些建议。相比为每个结构体提供各不相同、彼此割裂的 I/\allowbreak{}O API，使用 trait 仍然更胜一筹，但如果我们依赖某个第三方 crate 的特定行为，就需要验证它是否符合我们的预期。
+\label{idx:idx_db7d33cf}
+我们可以从 \texttt{Read} trait 开始考察这个 API。它暴露了若干用于从输入源读取的不同函数。第一个是 \texttt{read\_\allowbreak{}to\_\allowbreak{}string} 函数，它读取整个输入缓冲区，并把它追加到
+作为参数传给该函数的 \texttt{\&\allowbreak{}mut String} 中。这个函数返回一个
+\texttt{std::\allowbreak{}io::\allowbreak{}Result<\allowbreak{}usize>\allowbreak{}}，表示读取的字节数。正如若干
+在 Rust 中构造 \texttt{String} 类型的函数里，\texttt{read\_\allowbreak{}to\_\allowbreak{}string} 会在读取的数据不是合法 UTF-\allowbreak{}8 时返回错误。若发生这种情况，该函数被规定为保持目标
+\texttt{String} 不变。
+有了这些知识，我们就可以实现一个与之前考察过的
+\texttt{std::\allowbreak{}fs::\allowbreak{}read\_\allowbreak{}to\_\allowbreak{}string(\allowbreak{})\allowbreak{}} 函数类似的东西：
+\begin{codebox}[rust]
+let mut file = File::open("file.txt")?;
+let mut buffer = String::new();
+file.read_to_string(&mutbuffer)?;
+\end{codebox}
+这里需要注意的一个小细节是，我们必须把文件声明为可变（mutable），因为
+\label{idx:idx_a721266d}
+\texttt{read\_\allowbreak{}to\_\allowbreak{}string(\allowbreak{})\allowbreak{}} 需要能够修改输入源，以推进
+读取开始位置的偏移量，它有时被称为\emph{文件指针}。
+接下来要考察的函数是 \texttt{read()}，它实际上是 \texttt{Read} trait 的实现者唯一需要提供的函数。该 trait 中其余的函数都是基于
+\texttt{read()} 编写的，并会自动提供给所有实现。
+\texttt{read()} 函数与 \texttt{read\_\allowbreak{}to\_\allowbreak{}string(\allowbreak{})\allowbreak{}} 接口类似，同样接受 \texttt{\&mut [u8]} 作为参数，并返回 \texttt{std::\allowbreak{}io::\allowbreak{}Result<\allowbreak{}usize>\allowbreak{}}。与 \texttt{read\_\allowbreak{}to\_\allowbreak{}string(\allowbreak{})\allowbreak{}} 不同的是，传入的切片大小是固定的。因此，我们不会像之前使用动态大小的 \texttt{String} 时那样读到输入末尾并向 \texttt{u8} 切片追加内容。事实上，切片根本无法追加。我们是把字节直接读入切片，这意味着我们能从输入源读取的最大字节数，就是所传入切片能够容纳的字节数：
+\begin{codebox}[rust]
+let mut f = File::open("file.txt")?;
+let mut buf = [0; 10];
+let bytes_read = f.read(&mutbuf)?;
+\end{codebox}
+\label{idx:idx_8c066055}
+这个例子最多从文件中读取 10 个字节。如果输入源无法提供足够的字节来填满缓冲区，该怎么办？这并不算错误。是否需要检查 \texttt{Ok} 结果返回的已读取字节数是否被正确使用，取决于调用方。这会让 \texttt{read()} 用起来有些笨拙。如果这造成了问题，\texttt{Read} trait 还提供了 \texttt{read\_\allowbreak{}exact(\allowbreak{})\allowbreak{}} 函数来保证缓冲区被填满。由于 \texttt{read\_\allowbreak{}exact(\allowbreak{})\allowbreak{}} 函数隐含地指定了将要读取的字节数，因此无需返回
+\texttt{std::\allowbreak{}io::\allowbreak{}Result<\allowbreak{}usize>\allowbreak{}}，而是返回 \texttt{std::\allowbreak{}io::\allowbreak{}Result<\allowbreak{}(\allowbreak{})\allowbreak{}>\allowbreak{}}。
+\begin{myNotic}{注意}
+如果你打算通过多次小规模读取来从文件中获取数据，就应该把输入源包装进 \texttt{BufReader}。这个结构体对外暴露的 \texttt{Read} 接口完全相同，但在底层它会以更大的块从磁盘读取，并缓存到内存中，以获得更好的性能。许多想对 Rust 与其他语言做基准测试的人，都曾被这样一个事实所误导：必须主动选择启用缓冲。
+\end{myNotic}
+讲完了读取的基础知识，下面来看看 \texttt{std::\allowbreak{}io::\allowbreak{}Write} trait。在某些方面，Rust 中的写入比读取更容易理解，因为我们不需要处理任何可变缓冲区。不过，\texttt{Write} trait 的实现者必须编写两个函数，而不是一个：\texttt{write()} 和 \texttt{flush()}。
+\texttt{write()} 函数接受字节切片类型 \texttt{\&[u8]}，并返回 \texttt{std::\allowbreak{}io::\allowbreak{}Result<\allowbreak{}usize>\allowbreak{}}，表示已写入的字节数。遗憾的是，如果返回的表示已写入字节数的 \texttt{usize} 小于所传入缓冲区的大小，并不被视为错误。如果需要保证这一点，可以使用 \texttt{write\_\allowbreak{}all(\allowbreak{})\allowbreak{}} 方法，它返回
+\texttt{std::\allowbreak{}io::\allowbreak{}Result<\allowbreak{}(\allowbreak{})\allowbreak{}>\allowbreak{}}，就像它的同类 \texttt{read\_\allowbreak{}exact(\allowbreak{})\allowbreak{}} 一样：
+\begin{codebox}[rust]
+let mut file = File::create("test.txt")?;
+file.write_all("Hello World\n".as_bytes())?;
+\end{codebox}
+\label{idx:idx_10d5ef03}
+我们还需要考察 \texttt{Write} 中的另一个函数 \texttt{flush()}。它能确保已写入的字节立即反映到 I/\allowbreak{}O 目标上。I/\allowbreak{}O 实现通常会在需要快速运行的程序与可能耗费很长时间处理单次操作的 I/\allowbreak{}O 目标之间采用某种写入缓冲方式，这并不罕见。行为良好的 I/\allowbreak{}O 实现通常会透明地处理刷新，但当我们需要立即读回数据或确保数据立即反映出来时，就必须调用 \texttt{flush()}。
+请注意，如果我们想确保写入被缓冲，可以用 \texttt{BufWriter} 结构体来包装文件。这与前面提到的 \texttt{BufReader} 结构体相对应。例如，当我们要对文件进行多次小规模写入时，可能就会想用它。
+探讨完写入之后，我们来看看 Rust I/\allowbreak{}O API 探索之旅中的最后一个 trait。它就是
+\texttt{Seek} trait 用于让程序在文件或缓冲区中移动到不同位置。文件和
+\label{idx:idx_b3b27c7a}
+某些其他类型的 I/\allowbreak{}O 流会维护一个内部指针，用来决定下一次读或写从哪里开始。这通常被称为文件指针或游标。默认情况下，文件指针从输入流的开头开始，并随着我们执行读写而沿流线性移动。\texttt{Seek} 提供的函数允许我们操作这个指针，从而从文件或缓冲区的任意位置读取，或向其中写入。
+我们将用来实现这一点的主要方法是 \texttt{Seek} trait 中的 \texttt{seek()} 函数。该函数接受一个 \texttt{SeekFrom} 枚举作为参数，并以 \texttt{std::\allowbreak{}io::\allowbreak{}Result<\allowbreak{}u64>\allowbreak{}} 返回文件指针的新偏移量。
+\texttt{SeekFrom} 枚举为我们提供了三种设置文件指针的方式。这里，我们利用了 Rust 将数据与枚举变体一起存储的能力。\texttt{SeekFrom::\allowbreak{}Start} 接受一个相对文件开头的无符号偏移量，而 \texttt{SeekFrom::\allowbreak{}End} 和 \texttt{SeekFrom::\allowbreak{}Current} 则分别接受相对文件末尾和当前文件指针的有符号偏移量。
+要读取文件的最后 10 个字节，可以使用下面这样的代码：
+\begin{codebox}[rust]
+let mut file = File::open("test.txt")?;
+file.seek(SeekFrom::End(-10))?;
+let mut buf = vec![0; 10];
+file.read_exact(&mutbuf)?;
+\end{codebox}
+要获取文件指针在文件中的当前位置，我们也可以使用 \texttt{seek()}：
+\begin{codebox}[rust]
+let pos = file.seek(SeekFrom::Current(0))?;
+\end{codebox}
+能否定位到流的末尾之外，取决于我们所使用的 I/\allowbreak{}O 实现类型；但定位到文件开头之前的位置是不允许的，并且始终会返回错误。
+并非所有实现 \texttt{Read} 的类型都天然支持定位。例如，当直接从 \texttt{\&[u8]} 字节切片读取时，读取是通过收缩切片、排除已处理的字节来实现的。这样一来，切片原本的边界就丢失了。由于若不冒越界内存访问的风险，就无法扩展切片，因此我们无法在切片中向后定位。不过，标准库为许多类型（包括切片）提供了一种变通方法。
+\label{idx:idx_e0b8687f}
+\texttt{std::io} 模块中有一个名为 \texttt{Cursor} 的类型，它允许我们为内存缓冲区实现 \texttt{Seek}。这在各种任务中都很有用。一个常见的用途是：代码在生产环境中对文件操作，而在单元测试期间使用内存缓冲区。把缓冲区包装进 \texttt{Cursor}，就能通过提供 \texttt{Read}、\texttt{Write} 和 \texttt{Seek} trait 获得类似 \texttt{File} 的行为。把前面的例子改造成使用游标很简单：
+\begin{codebox}[rust]
+let mut cursor = Cursor::new(b"test buffer");
+cursor.seek(SeekFrom::End(-10))?;
+let mut buf = vec![0; 10];
+cursor.read_exact(&mutbuf)?;
+\end{codebox}
+理解了 Rust 的三个基础 I/\allowbreak{}O trait 之后，我们就能在成千上万种不同的流上执行 I/\allowbreak{}O 操作。但仅有这些 trait 还不够完整，因为 crate 生态可以为它们添加额外的行为。
+\subsection{扩展 I/O API}
+\label{idx:idx_d0720ad6}
+Rust 中基于 trait 实现 I/\allowbreak{}O 行为的一个优势是，trait 可以被扩展。扩展一个 trait 可以为实现该 trait 的每一个结构体添加新方法。请注意，这里的\emph{扩展}并不是 C++ 意义上的\emph{重写}（overriding）。扩展某个 trait 的 trait 无法以任何方式改变原 trait 的行为。我们可以添加与原 trait 中完全相同的方法，但在调用时编译器会要求我们对它们进行消歧。
+扩展一个 trait 需要两个步骤。首先，我们必须把原来的
+\texttt{std::\allowbreak{}io::\allowbreak{}Read} trait 声明为扩展 trait 的\emph{超 trait}（supertrait）：
+\begin{codebox}[rust]
+pub trait ReadExt: std::io::Read {
+    fn read_ext(&mut self, buf: &mut [u8])
+     -> std::io::Result<usize> {
+        self.read(buf)
+    }
+}
+\end{codebox}
+这里，我们只是为 \texttt{read()} 函数做一个包装。注意，指定超 trait 的语法与 C++ 中继承的语法类似。与其他场景一样，我们可以用 \texttt{+} 把一个以上的 trait 声明为超 trait。还要注意，声明超 trait 让我们能在自己的实现中使用来自该 trait 的方法。
+第二步，我们必须告诉编译器，我们希望为每一个实现了 \texttt{Read} 的类型实现我们的新 trait：
+\begin{codebox}[rust]
+impl<T> ReadExt for T where T: Read {}
+\end{codebox}
+现在，只要用 \texttt{use} 语句导入了 \texttt{ReadExt} trait，我们就能调用
+我们为每一个实现了 \texttt{Read} 的类型（从 \texttt{File} 到 \texttt{TcpStream}）添加的 \texttt{read\_ext()} 方法。以这种方式为标准类型添加行为，为第三方 crate 生态增添了一个有趣的
+维度。
+有一个极其有用的 crate 叫做 \texttt{byteorder}，它用这套方法提供了按指定端序（endianness）读写数据的函数。完整讨论端序超出了本书的范围，但请回忆一下：取决于体系结构的端序，存储到内存或文件系统的整数和浮点类型的字节可能以相反的顺序存放。以这种方式存储数据的文件格式通常会为数据指定一种端序，我们必须了解它并加以补偿，才能在不同体系结构上正确读取数据。
+\label{idx:idx_583bd734}
+\texttt{byteorder} crate 提供了 \texttt{ReadBytesExt} 和 \texttt{WriteBytesExt} trait，它们分别扩展了标准的 \texttt{Read} 和 \texttt{Write} trait。每个都包含一套完整的读写函数，适用于 Rust 的各种整数和浮点类型，但必须显式指定数据的端序。
+来看一个例子。首先，我们要导入 \texttt{byteorder} 中想要使用的部分：
+\begin{codebox}[rust]
+use byteorder::{LittleEndian, BigEndian, ReadBytesExt};
+\end{codebox}
+下面用两种端序分别从字节缓冲区中读取一个 \texttt{u32}，并观察结果：
+\begin{codebox}[rust]
+let mut cursor = Cursor::new([0xaa, 0xbb, 0xcc, 0xdd]);
+println!("{:x}", cursor.read_u32::<LittleEndian>()?);
+\end{codebox}
+这里使用的 \texttt{\{:x\}} 格式说明符告诉 Rust 以十六进制打印结果。如果把输入数据按小端序处理，我们会预期这些字节的顺序与其在内存中的表示相反。果然，我们的测试运行时会打印出以下内容：
+\begin{codeboxdark}
+ddccbbaa
+\end{codeboxdark}
+再来一次，这次把数据按大端序解释：
+\begin{codebox}[rust]
+let mut cursor = Cursor::new([0xaa, 0xbb, 0xcc, 0xdd]);
+println!("{:x}", cursor.read_u32::<BigEndian>()?);
+\end{codebox}
+输出同样符合我们的预期：
+\begin{codeboxdark}
+aabbccdd
+\end{codeboxdark}
+\label{idx:idx_344e6643}
+即使是最好的 API 设计也无法预见所有用例。\texttt{byteorder} crate 展示了 Rust 的一大优势——标准库中的空缺可以被 crate 生态以干净利落的方式有效填补。下一节我们将考察 crate 生态的另一个强力用法：以简洁的方式实现复杂行为。
+\section{简单的序列化与反序列化}
+\label{idx:idx_086a04f7}
+\label{idx:idx_fd49d109}
+在处理 JSON、YAML 或 TOML 等格式的结构化文本数据时，我们把内存中的数据以该结构化格式写出的过程称为\textbf{序列化}，把从结构化格式读取并生成一份与之匹配的内存数据副本的过程称为\textbf{反序列化}。
+Rust 生态中最流行、最有用的 crate 之一是 \texttt{serde} crate。它的名字
+\texttt{serde} 是“serialization”与“deserialization”的组合，它提供了一套便捷的
+接口，用于为种类繁多的结构化文件格式执行这些重要的操作。在本节中，我们将开发一个简单的应用程序，用 \texttt{serde} 把 JSON 数据加载进 Rust 结构体，修改它，再把结果写回一个新的 JSON 文件。
+\subsection{使用 serde 读取 JSON 文件}
+\label{idx:idx_3111d65c}
+\label{idx:idx_cd5b1033}
+首先，我们会在本地创建一个新的 Rust 项目来存放我们的工作成果。这个项目的完整版本可以在 GitHub 上找到，你也可以跟着我们一步步创建它：
+\begin{codeboxdark}
+$ cargo new serde_test
+$ cd serde_test
+$ cargo add serde serde_derive serde_json
+\end{codeboxdark}
+这里，我们创建新项目并添加几个需要的 crate。\texttt{serde} crate 包含我们将用于反序列化的基础泛型接口。\texttt{serde\_\allowbreak{}derive} crate 让我们可以使用 derive 属性来创建能被 \texttt{serde} 构造的结构体。最后，
+\texttt{serde\_json} crate 专门为 JSON
+格式提供序列化和反序列化服务。
+我们还需要构造一个要读取的 JSON 文件。我们将用下面的数据作为测试，把它保存到名为 \texttt{pets.json} 的文件中：
+\begin{codeboxdark}
+{
+  "pets": [
+    {
+      "name": "Fluffy",
+      "info": { "kind": "dog", "age": 3 }
+    },
+    {
+      "name": "Princess",
+      "info": { "kind": "cat", "age": 5 }
+    }
+  ]
+}
+\end{codeboxdark}
+这些数据本身并不特别重要，但这种格式至少会迫使我们的序列化器处理 JSON 特性的一个合理子集。
+\label{idx:idx_7e0e07ab}
+\label{idx:idx_16c438fb}
+项目已经创建好，数据也准备好处理了，接下来我们会构造一系列 Rust 结构体，与我们要读取的数据的总体格式相匹配。每个结构体都会派生
+\texttt{Serialize} 和 \texttt{Deserialize} trait，我们需要从 \texttt{serde\_\allowbreak{}derive} 导入它们，导入语句要放在文件的
+\texttt{main.rs} 顶部：
+\begin{codebox}[rust]
+use serde_derive::{Deserialize, Serialize};
+\end{codebox}
+下面开始梳理数据的结构，从顶层入手，逐层向内。首先，我们需要一个结构体来容纳顶层对象。我们把它叫做 \texttt{PetFile}，当需要读入数据时，它就是我们要传给 \texttt{serde\_json} crate 的结构体：
+\begin{codebox}[rust]
+#[derive(Debug, Deserialize, Serialize)]
+struct PetFile {
+    pets: Vec<Pet>,
+}
+\end{codebox}
+除了两个 \texttt{serde\_\allowbreak{}derive} trait 之外，我们还派生了 \texttt{Debug}。一旦我们用 \texttt{serde} 读入数据，这能让程序更方便地打印数据以便检查。可以看到，这个结构体本身与我们的测试数据的布局相匹配，测试数据包含一个对象数组。但我们还需要定义 \texttt{Pet}，现在就来做：
+\begin{codebox}[rust]
+#[derive(Debug, Deserialize, Serialize)]
+struct Pet {
+    name: String,
+    info: PetInfo,
+}
+\end{codebox}
+\label{idx:idx_1e80c2d7}
+\label{idx:idx_952519a3}
+\texttt{Pet} 的定义此时开始显现出一点规律。当我们在 JSON 文件中遇到一个对象时，就新建一个结构体来表示该对象。当在 JSON 文件中遇到一个数组时，就在结构体中加入 \texttt{Vec}。最后，当遇到任何整数或字符串值时，我们可以用相应的 Rust 类型来表示它。到这里，\texttt{PetInfo} 的定义应该已经非常可预测了：
+\begin{codebox}[rust]
+#[derive(Debug, Deserialize, Serialize)]
+struct PetInfo {
+    kind: String,
+    age: usize,
+}
+\end{codebox}
+既然我们已经创建了表示测试数据的结构体并派生了合适的 trait，就可以开始使用 \texttt{serde} 本身了。我们从把测试数据读入刚刚定义的结构体开始：
+\begin{codebox}[rust]
+type AnyError = Box<dyn std::error::Error>;
+fn read_pet_file(filename: &str)
+    -> Result<PetFile, AnyError> {
+    let data = std::fs::read_to_string(filename)?;
+    let pets = serde_json::from_str::<PetFile>(&data)?;
+    Ok(pets)
+}
+\end{codebox}
+这个看起来有点奇怪的 \texttt{AnyError} 类型别名是什么？它既让我们得以一窥 Rust 对运行时多态的处理方式，也是一种让 \texttt{Result} 能接受任意错误类型的方法。所有实现了 \texttt{Error} trait 的类型都能借助 \texttt{From}/\texttt{Into} trait 转换到该类型，正如我们之前提到的，这两个 trait 已被内建到问号运算符的行为中。通常，这种功能会用 \texttt{anyhow} 这类更高级的 crate 来实现，但对于我们这个简单的序列化示例来说，这样就足够了。
+\label{idx:idx_f958787e}
+该函数本身会把我们传入的文件读取为字符串，然后我们把得到的数据传给 \texttt{serde\_json} crate 的 \texttt{from\_str} 函数。这是一个泛型函数，我们必须告诉编译器希望用哪个结构体来解释数据。因此我们需要用涡轮鱼运算符（turbofish）\texttt{::< >} 指定 \texttt{PetFile} 结构体。
+\label{idx:idx_2ab5b6df}
+要完成这个例子，我们只差一样东西，那就是 \texttt{main()} 函数：
+\begin{codebox}[rust]
+fn main() -> Result<(), AnyError> {
+    let pets = read_pet_file("pets.json")?;
+    println!("{:#?}", pets);
+    Ok(())
+}
+\end{codebox}
+我们的 \texttt{main()} 函数读取 \texttt{pets.json} 文件，并用我们之前派生的 \texttt{Debug} trait 美化打印结构体的内容。请注意，在格式字符串中，\texttt{\{:\#?\}} 格式说明符表示以美化格式打印调试表示，而 \texttt{\{:?\}} 格式说明符则会把整个对象打印在一行上。
+这是我们第一个完整示例：读取文件并解析它，且带有完整的错误处理。如果你一直在跟着敲代码，那么我建议你现在动手玩玩它。不做任何修改时，\texttt{cargo}
+\texttt{run} 会打印出什么？如果文件缺失会发生什么？如果我们改变
+JSON 文件的格式，又会发生什么？如果在数据中添加或删除属性，这个示例还能正常工作吗？如果我们更改某个键的名字会发生什么？
+\texttt{serde} 的一些默认行为在遇到未知字段或可选字段时，可能会出乎意料或不尽如人意。接下来，我们来看看如何修改结构体的默认行为。
+\subsection{自定义序列化行为}
+\label{idx:idx_e39df1b0}
+如果你花了一些时间摆弄前面的例子，可能会注意到它的行为非常死板。我们现在来看看如何自定义 \texttt{serde} 的行为，让它更接近我们在真实程序中可能想要的效果。当我们派生 \texttt{Serialize} 和
+\texttt{Deserialize} trait 时，可用的主要配置手段是 Rust 类型
+系统和由 \texttt{serde\_\allowbreak{}derive} 定义的自定义属性。
+如果你碰巧试着删除或重命名 \texttt{pets.json} 文件中的某些数据，很可能会看到 \texttt{serde} 报出关于缺失字段的错误。我们在 Rust 结构体中声明的每一个字段都必须出现在数据中，否则程序就会返回错误。但如果我们希望程序能干净地处理某个字段的存在与不存在，该怎么办呢？
+使用 Rust 的 \texttt{Option<T>} 类型可以轻松解决这个问题。把任意类型包装进 \texttt{Option} 后，我们就告诉 \texttt{serde} 用插入 \texttt{None} 值的方式来干净地处理数据缺失。对于没有缺失的字段，当然会被设为 \texttt{Some(T)}。
+要让 \texttt{PetInfo} 结构体的 \texttt{age} 字段变为可选，我们可以这样修改声明：
+\begin{codebox}[rust]
+#[derive(Debug, Deserialize, Serialize)]
+struct PetInfo {
+    kind: String,
+    age: Option<usize>,
+}
+\end{codebox}
+使用 \texttt{Option} 可以是一个很好的解决方案，但它要求我们在代码中使用该值时处理 \texttt{Option} 的解包。不过，解决可选字段问题还有另一种方法。
+解决方案就在于 \texttt{serde} 自定义属性的强大之处。如果数据中缺少某个字段，可以用 \texttt{\#[\allowbreak{}serde(\allowbreak{}default)\allowbreak{}]\allowbreak{}} 属性把一个默认值（由该类型的 \texttt{Default} trait 实现所定义）放入结构体。大多数标准类型都使用 \texttt{Default} trait 定义了某个合理的默认值，而对我们自己程序中使用的类型，它可以被派生或显式实现。
+如果我们想让 \texttt{age} 字段默认为零，同时允许它可以缺失于 JSON 文件，就可以使用这样的语法：
+\begin{codebox}[rust]
+#[derive(Debug, Deserialize, Serialize)]
+struct PetInfo {
+    kind: String,
+    #[serde(default)]
+    age: usize,
+}
+\end{codebox}
+\label{idx:idx_782e0fb7}
+\texttt{serde} 的自定义属性还有其他用途。设想我们的数据文件里有某个字段与 Rust 语言的保留字冲突，比如 \texttt{type}。我们可以用属性告诉 \texttt{serde} 使用某个特定的 JSON 属性名，而不是结构体字段名。
+我们可以用 \texttt{rename} 属性来实现，像这样：
+\begin{codebox}[rust]
+#[derive(Debug, Deserialize)]
+struct Data {
+    #[serde(rename = "type")]
+    type_: String,
+}
+\end{codebox}
+我们还可以在结构体本身上放置不同的自定义属性。一个有用的例子是
+\texttt{rename\_all} 属性。Rust 编译器对在结构体和变量名上遵循某些
+约定非常严格，但我们的 JSON 输入文件并不总会符合这一标准。\texttt{rename\_all} 属性用于对所有字段名进行统一转换，这样我们就能在程序中愉快地使用 Rust 约定，同时仍能正确读取 JSON 约定：
+\begin{codebox}[rust]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Data {
+    test_field: String,
+}
+const INPUT: &str = "{ \"TestField\": \"test\" }";
+fn main() {
+    let data = serde_json::from_str::<Data>(INPUT).unwrap();
+    println!("{:#?}", data);
+}
+\end{codebox}
+在这个例子中，我们指定 JSON 中的所有字段都应当是 \texttt{PascalCase} 约定。如果运行这个程序，就会看到数据如我们预期的那样被正确解析和反序列化。可用约定的完整列表可以在 \texttt{serde} 文档中找到。
+\label{idx:idx_8454cb16}
+最后，我们来强调最后一个自定义属性。如果你摆弄过前面那个可运行的例子，可能会注意到，如果输入中有一些未在 Rust 结构体中指定的额外字段，\texttt{serde} 完全不介意。默认情况下这些字段会被直接忽略，但如果我们希望它们的存在反而引发运行时错误，只需给结构体加上 \texttt{deny\_\allowbreak{}unknown\_\allowbreak{}fields} 属性：
+\begin{codebox}[rust]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+#[serde(deny_unknown_fields)]
+struct Data {
+    test_field: String,
+}
+\end{codebox}
+文档中还有若干其他有用的自定义属性。如果你觉得用 \texttt{serde} 已经走进了死胡同，值得把这些属性翻一翻。现在，我们将通过为可运行的示例添加序列化支持，继续我们对 \texttt{serde} 的探索。
+\subsection{写出 JSON}
+\label{idx:idx_d23393ce}
+我们主要探讨的是反序列化，但现在是时候谈谈序列化了。这意味着我们需要考察如何把程序中创建的结构体转换成一个格式良好的 JSON 文件，用来表示相同的数据。
+我们将像之前一样使用同一个 \texttt{PetFile} 结构体。我们本可以花大量时间在 Rust 中构造所有各种结构体，但不如直接像之前那样从同一个文件中读取。这样我们就有了一个数据作为起点。我们的程序会把每只宠物的年龄加一，然后把数据写回终端。下面从需要对 \texttt{main()} 函数做的修改开始：
+\begin{codebox}[rust]
+fn main() -> Result<(), AnyError> {
+    let mut pets = read_pet_file("pets.json")?;
+    for pet in &mut pets.pets {
+        pet.info.age += 1;
+    }
+    print_pet_data(&pets)?;
+    Ok(())
+}
+\end{codebox}
+\label{idx:idx_812a2668}
+这看起来与我们之前尝试的类似，但这一次，我们决定修改数据。因此，我们必须把 \texttt{pets} 变量声明为 \texttt{mut}。这让我们可以用 \texttt{for pet in \&\allowbreak{}mut pets.\allowbreak{}pets} 循环对 \texttt{Vec<Pet>} 中的值进行可变迭代。在把每只宠物的年龄加 1 之后，我们调用一个函数来打印新数据，这个函数我们接下来就会定义：
+\begin{codebox}[rust]
+fn print_pet_data(data:&PetFile)-> Result<(), AnyError> {
+    let output = serde_json::to_string(data)?;
+    println!("{}", output);
+    Ok(())
+}
+\end{codebox}
+该函数调用 \texttt{serde\_json} 中的 \texttt{to\_\allowbreak{}string(\allowbreak{})\allowbreak{}} 函数，把结构体序列化回 JSON，并据此创建一个 \texttt{String}。
+用 \texttt{cargo run} 运行这个新版本的程序，会看到如下输出：
+\begin{codeboxdark}
+{"pets":[{"name":"Fluffy","info":{"kind":"dog","age":4}},
+{"name":"Princess","info":{"kind":"cat","age":6}}]}
+\end{codeboxdark}
+数据是正确的，但格式不太好看。JSON 常被用作交换格式，并不指望由人来阅读，所以 \texttt{to\_\allowbreak{}string(\allowbreak{})\allowbreak{}} 函数不会费力把它排版得对人友好。如果改用
+\texttt{to\_\allowbreak{}string\_\allowbreak{}pretty(\allowbreak{})\allowbreak{}} 函数，输出就会友好得多。你可以自行尝试，
+不过为了演示，下面我们改用一种完全不同的结构化格式来输出数据。
+回到测试程序，下面把 \texttt{toml} crate 也加进来：
+\begin{codeboxdark}
+$ cargo add toml
+\end{codeboxdark}
+现在只需在 \texttt{print\_\allowbreak{}pet\_\allowbreak{}data} 函数中改动一个标识符，就能让 crate 改用 TOML 作为输出格式：
+\begin{codebox}[rust]
+fn print_pet_data(data:&PetFile)-> Result<(), AnyError> {
+    let output = toml::to_string(data)?;
+    println!("{}", output);
+    Ok(())
+}
+\end{codebox}
+\label{idx:idx_c0e9a228}
+现在运行程序，会得到输入数据对应的漂亮 TOML 版本，其中体现了我们对 \texttt{age} 的修改：
+\begin{codeboxdark}
+[[pets]]
+name = "Fluffy"
+[pets.info]
+kind = "dog"
+age = 4
+[[pets]]
+name = "Princess"
+[pets.info]
+kind = "cat"
+age = 6
+\end{codeboxdark}
+\label{idx:idx_06768e7e}
+这只是对 \texttt{serde} 能力的一次简短巡礼，但我希望它能让你体会到：在 Rust 里，复杂的序列化其实也可以很简单地正确实现。这得益于 Rust 为第三方 crate 提供的强大能力——让它们可以自行实现 derive 功能和自定义属性，也离不开 Rust 社区大量巧妙的软件工程。
+\section{小结}
+在本章中，我们学习了如何操作文件系统以及处理错误。我们深入探讨了多种读写 I/\allowbreak{}O 流的方法，尤其着重于使用文件。最后，我们介绍了如何用 \texttt{serde} crate 让处理结构化文本格式变得轻而易举。
+下一章，我们将深入 Rust 标准库的另一个重要组成部分：\textbf{迭代器}。
+\needspace{26\baselineskip}
+\begin{samepage}
+\subsection{获取本书的 PDF 版本及更多内容}
+扫描二维码（或访问 \texttt{packtpub.\allowbreak{}com/\allowbreak{}unlock}）。按书名搜索本书，确认版本，然后按页面上的步骤操作。
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\emph{注意：请保留好你的发票。直接从 Packt 购买的订单无需发票。}
+\myGraphic{0.32}{images/qr_unlock.png}{}
+\myGraphic{0.20}{images/unlock_btn.png}{}
+\end{samepage}
